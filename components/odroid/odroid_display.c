@@ -311,6 +311,8 @@ static void touch_glyph(uint16_t *buf, int stride, int width, int height,
     static const uint8_t glyph_o[5] = {0x7, 0x5, 0x5, 0x5, 0x7};
     static const uint8_t glyph_u[5] = {0x5, 0x5, 0x5, 0x5, 0x7};
     static const uint8_t glyph_v[5] = {0x5, 0x5, 0x5, 0x5, 0x2};
+    static const uint8_t glyph_x[5] = {0x5, 0x5, 0x2, 0x5, 0x5};
+    static const uint8_t glyph_y[5] = {0x5, 0x5, 0x2, 0x2, 0x2};
     const uint8_t *g = NULL;
     switch (c) {
     case 'A': g = glyph_a; break; case 'B': g = glyph_b; break;
@@ -319,6 +321,7 @@ static void touch_glyph(uint16_t *buf, int stride, int width, int height,
     case 'R': g = glyph_r; break; case 'M': g = glyph_m; break;
     case 'N': g = glyph_n; break; case 'O': g = glyph_o; break;
     case 'U': g = glyph_u; break; case 'V': g = glyph_v; break;
+    case 'X': g = glyph_x; break; case 'Y': g = glyph_y; break;
     default: return;
     }
     for (int row = 0; row < 5; row++) {
@@ -340,14 +343,26 @@ static void touch_label(uint16_t *buf, int stride, int width, int height,
                                                x + i * 4, cy - 2, text[i], color);
 }
 
-/* Draw controls into the physical side margins, not into the game image.
- * The game image is rotated by PPA. These panels are copied directly into the
- * LCD framebuffer, so their coordinates and glyphs are already final physical
- * landscape coordinates: apply no second rotation to the overlay. */
+/* Draw controls into the side margins, not into the game image.  The panel's
+ * DPI framebuffer is displayed with the same 180-degree orientation as the
+ * PPA game output.  The artwork is therefore rendered in the desired physical
+ * orientation, rotated before copying, and written to the opposite source
+ * margin so it lands beside the matching physical touch hitbox. */
 #define TOUCH_PANEL_MAX_W 192
 #define TOUCH_PANEL_MAX_H 600
 #define TOUCH_PANEL_BYTES (TOUCH_PANEL_MAX_W * TOUCH_PANEL_MAX_H * sizeof(uint16_t))
 static uint16_t *s_touch_panel_buf = NULL;
+
+static void touch_rotate_panel_180(uint16_t *buf, int width, int height)
+{
+    size_t pixels = (size_t)width * height;
+    for (size_t i = 0; i < pixels / 2; ++i) {
+        size_t opposite = pixels - 1 - i;
+        uint16_t tmp = buf[i];
+        buf[i] = buf[opposite];
+        buf[opposite] = tmp;
+    }
+}
 
 static void draw_touch_side_panel(uint16_t *buf, int width, int height, bool right)
 {
@@ -359,22 +374,35 @@ static void draw_touch_side_panel(uint16_t *buf, int width, int height, bool rig
     int box_h = 36;
 
     if (right) {
-        /* The game image is rotated 180 degrees for the panel. Keep the
-         * virtual controller in that same physical orientation: START is
-         * at the top, VOLUME at the bottom, and A/B follow the rotation. */
+        /* Desired physical orientation: START at the top, VOLUME at the
+         * bottom, with A/B below it.  The whole panel is rotated before it is
+         * copied into the DPI framebuffer. */
         int top_y = 10;
         int bottom_y = height - box_h - 10;
         touch_fill_rect(buf, width, width, height, box_x, top_y, box_w, box_h, 0x39E7);
         touch_rect_border(buf, width, width, height, box_x, top_y, box_w, box_h, 0xBDF7);
         touch_label(buf, width, width, height, width / 2, top_y + box_h / 2, "START", 0xFFFF);
 
-        int radius = width > 160 ? 34 : 24;
-        int ax = width - width * 34 / 100, ay = height - 270;
-        int bx = width - width * 68 / 100, by = height - 380;
+        int shoulder_y = 78;
+        touch_fill_rect(buf, width, width, height, box_x, shoulder_y - box_h / 2,
+                        box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, shoulder_y - box_h / 2,
+                          box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, shoulder_y, "R", 0xFFFF);
+
+        int radius = width > 160 ? 30 : 23;
+        int ax = width * 72 / 100, ay = 235;
+        int bx = width * 50 / 100, by = 300;
+        int xx = width * 50 / 100, xy = 170;
+        int yx = width * 28 / 100, yy = 235;
         touch_circle(buf, width, width, height, ax, ay, radius, 0xF800);
         touch_circle(buf, width, width, height, bx, by, radius, 0x001F);
+        touch_circle(buf, width, width, height, xx, xy, radius, 0x07E0);
+        touch_circle(buf, width, width, height, yx, yy, radius, 0xFFE0);
         touch_label(buf, width, width, height, ax, ay, "A", 0xFFFF);
         touch_label(buf, width, width, height, bx, by, "B", 0xFFFF);
+        touch_label(buf, width, width, height, xx, xy, "X", 0xFFFF);
+        touch_label(buf, width, width, height, yx, yy, "Y", 0x0000);
 
         touch_fill_rect(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0x39E7);
         touch_rect_border(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0xBDF7);
@@ -385,6 +413,13 @@ static void draw_touch_side_panel(uint16_t *buf, int width, int height, bool rig
         touch_fill_rect(buf, width, width, height, box_x, top_y, box_w, box_h, 0x39E7);
         touch_rect_border(buf, width, width, height, box_x, top_y, box_w, box_h, 0xBDF7);
         touch_label(buf, width, width, height, width / 2, top_y + box_h / 2, "SEL", 0xFFFF);
+
+        int shoulder_y = 78;
+        touch_fill_rect(buf, width, width, height, box_x, shoulder_y - box_h / 2,
+                        box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, shoulder_y - box_h / 2,
+                          box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, shoulder_y, "L", 0xFFFF);
 
         int dpad_cx = width / 2, dpad_cy = height - 315;
         int arm = width > 160 ? 54 : 38;
@@ -419,13 +454,13 @@ static void draw_touch_controls_physical(uint16_t game_x, uint16_t game_y,
         if (s_touch_side_controls_visible && s_touch_panel_buf) {
             memset(s_touch_panel_buf, 0,
                    (size_t)TOUCH_PANEL_MAX_W * lcd_h * sizeof(uint16_t));
-            if (left_w > 0) {
-                int clear_w = left_w > TOUCH_PANEL_MAX_W ? TOUCH_PANEL_MAX_W : left_w;
-                st7701_lcd_draw_to_fb(0, 0, clear_w, lcd_h, s_touch_panel_buf);
-            }
             if (right_w > 0) {
                 int clear_w = right_w > TOUCH_PANEL_MAX_W ? TOUCH_PANEL_MAX_W : right_w;
-                st7701_lcd_draw_to_fb(right_x, 0, clear_w, lcd_h, s_touch_panel_buf);
+                st7701_lcd_draw_to_fb(0, 0, clear_w, lcd_h, s_touch_panel_buf);
+            }
+            if (left_w > 0) {
+                int clear_w = left_w > TOUCH_PANEL_MAX_W ? TOUCH_PANEL_MAX_W : left_w;
+                st7701_lcd_draw_to_fb(lcd_w - clear_w, 0, clear_w, lcd_h, s_touch_panel_buf);
             }
             s_touch_side_controls_visible = false;
         }
@@ -446,15 +481,17 @@ static void draw_touch_controls_physical(uint16_t game_x, uint16_t game_y,
     if (left_w > 0) {
         if (left_w > TOUCH_PANEL_MAX_W) left_w = TOUCH_PANEL_MAX_W;
         draw_touch_side_panel(s_touch_panel_buf, left_w, lcd_h, false);
-        /* draw_rgb_bitmap may queue an async DMA2D transfer. The buffer is
-         * reused for the right panel immediately, so copy through the DPI
-         * framebuffer to make both panels deterministic. */
-        st7701_lcd_draw_to_fb(0, 0, left_w, lcd_h, s_touch_panel_buf);
+        /* The DPI framebuffer is 180 degrees relative to physical LCD
+         * coordinates: physical-left artwork belongs in the logical-right
+         * margin. Rotate the panel pixels as well, so labels remain upright. */
+        touch_rotate_panel_180(s_touch_panel_buf, left_w, lcd_h);
+        st7701_lcd_draw_to_fb(lcd_w - left_w, 0, left_w, lcd_h, s_touch_panel_buf);
     }
     if (right_w > 0) {
         if (right_w > TOUCH_PANEL_MAX_W) right_w = TOUCH_PANEL_MAX_W;
         draw_touch_side_panel(s_touch_panel_buf, right_w, lcd_h, true);
-        st7701_lcd_draw_to_fb(right_x, 0, right_w, lcd_h, s_touch_panel_buf);
+        touch_rotate_panel_180(s_touch_panel_buf, right_w, lcd_h);
+        st7701_lcd_draw_to_fb(0, 0, right_w, lcd_h, s_touch_panel_buf);
     }
 
     s_touch_side_controls_drawn = true;

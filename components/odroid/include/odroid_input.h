@@ -12,8 +12,8 @@
  *   R1/R2  → R (right shoulder)
  *   SELECT → SELECT
  *   START  → START
- *   GT911 touch panel → landscape launcher controls and optional in-game
- *   virtual controls
+ *   GT911 touch panel → landscape launcher controls and in-game virtual
+ *   controls (A/B/X/Y/L/R plus D-pad and system buttons)
  */
 #pragma once
 
@@ -130,8 +130,8 @@ bool odroid_input_usb_gamepad_connected(void);
 
 /**
  * Enable the landscape on-screen emulator controls. Touches are translated
- * into D-pad, A/B, Select/Start, and menu/volume input, and the controls are
- * drawn over emulator frames. Launcher code leaves this disabled.
+ * into D-pad, A/B/X/Y/L/R, Select/Start, and menu/volume input, and the
+ * controls are drawn over emulator frames. Launcher code leaves this disabled.
  */
 void odroid_input_touch_game_controls_enable(bool enabled);
 

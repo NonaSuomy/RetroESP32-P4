@@ -64,8 +64,12 @@ enum {
     TOUCH_GAME_START = 1 << 5,
     TOUCH_GAME_A = 1 << 6,
     TOUCH_GAME_B = 1 << 7,
-    TOUCH_GAME_MENU = 1 << 8,
-    TOUCH_GAME_VOLUME = 1 << 9,
+    TOUCH_GAME_X = 1 << 8,
+    TOUCH_GAME_Y = 1 << 9,
+    TOUCH_GAME_L = 1 << 10,
+    TOUCH_GAME_R = 1 << 11,
+    TOUCH_GAME_MENU = 1 << 12,
+    TOUCH_GAME_VOLUME = 1 << 13,
 };
 static volatile uint16_t s_touch_game_mask = 0;
 static int64_t s_touch_last_us = 0;
@@ -191,6 +195,8 @@ static uint16_t touch_read_game_mask(uint16_t *raw_x, uint16_t *raw_y,
             mask |= TOUCH_GAME_SELECT;
         } else if (ty >= 525) {
             mask |= TOUCH_GAME_MENU;
+        } else if (ty >= 65 && ty < 115) {
+            mask |= TOUCH_GAME_L;
         } else {
             /* Match the left-margin D-pad, with a smaller geometry for
              * Duke3D's 128-pixel side margins. */
@@ -213,12 +219,18 @@ static uint16_t touch_read_game_mask(uint16_t *raw_x, uint16_t *raw_y,
             mask |= TOUCH_GAME_START;
         } else if (ty >= 525) {
             mask |= TOUCH_GAME_VOLUME;
+        } else if (ty >= 65 && ty < 115) {
+            mask |= TOUCH_GAME_R;
         } else {
-            int radius = right_w > 160 ? 42 : 31;
-            int da_x = rx - right_w * 66 / 100, da_y = (int)ty - (600 - 270);
-            int db_x = rx - right_w * 32 / 100, db_y = (int)ty - (600 - 380);
+            int radius = right_w > 160 ? 38 : 29;
+            int da_x = rx - right_w * 72 / 100, da_y = (int)ty - 235;
+            int db_x = rx - right_w * 50 / 100, db_y = (int)ty - 300;
+            int dx_x = rx - right_w * 50 / 100, dx_y = (int)ty - 170;
+            int dy_x = rx - right_w * 28 / 100, dy_y = (int)ty - 235;
             if (da_x * da_x + da_y * da_y <= radius * radius) mask |= TOUCH_GAME_A;
             if (db_x * db_x + db_y * db_y <= radius * radius) mask |= TOUCH_GAME_B;
+            if (dx_x * dx_x + dx_y * dx_y <= radius * radius) mask |= TOUCH_GAME_X;
+            if (dy_x * dy_x + dy_y * dy_y <= radius * radius) mask |= TOUCH_GAME_Y;
         }
     }
 
@@ -366,6 +378,10 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
     state->values[ODROID_INPUT_START]  |= (s_touch_game_mask & TOUCH_GAME_START) != 0;
     state->values[ODROID_INPUT_A]      |= (s_touch_game_mask & TOUCH_GAME_A) != 0;
     state->values[ODROID_INPUT_B]      |= (s_touch_game_mask & TOUCH_GAME_B) != 0;
+    state->values[ODROID_INPUT_X]      |= (s_touch_game_mask & TOUCH_GAME_X) != 0;
+    state->values[ODROID_INPUT_Y]      |= (s_touch_game_mask & TOUCH_GAME_Y) != 0;
+    state->values[ODROID_INPUT_L]      |= (s_touch_game_mask & TOUCH_GAME_L) != 0;
+    state->values[ODROID_INPUT_R]      |= (s_touch_game_mask & TOUCH_GAME_R) != 0;
     state->values[ODROID_INPUT_MENU]   |= (s_touch_game_mask & TOUCH_GAME_MENU) != 0;
     state->values[ODROID_INPUT_VOLUME] |= (s_touch_game_mask & TOUCH_GAME_VOLUME) != 0;
 #endif /* !CONFIG_HDMI_OUTPUT */

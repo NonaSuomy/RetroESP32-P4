@@ -340,89 +340,6 @@ static void menu_draw_num(uint16_t *fb, int fbw, int fbh, int x, int y, int val,
     }
 }
 
-/* Sidebar button buffers (portrait coords, drawn once to DPI FB) */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } neo_sidebar_btns[] = {
-    { "MENU", 200,  2,  80, 90 },    /* landscape LEFT sidebar  (portrait top,    game starts y=96) */
-    { "VOL",  200, 708, 80, 84 },    /* landscape RIGHT sidebar (portrait bottom, game ends   y=704) */
-};
-static int sidebar_countdown = 2;  /* blit sidebar for first N frames */
-
-static void neo_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = neo_sidebar_btns[b].pw, ph = neo_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
-        }
-
-        /* Render text rotated for landscape reading */
-        const char *s = neo_sidebar_btns[b].text;
-        int nch = 0;
-        for (const char *p = s; *p; p++) nch++;
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_by = oy + ci * (CW + GAP);
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (menu_font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered", b, neo_sidebar_btns[b].text);
-    }
-}
-
-static void neo_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)neo_sidebar_btns[b].px, (uint16_t)neo_sidebar_btns[b].py,
-            (uint16_t)neo_sidebar_btns[b].pw, (uint16_t)neo_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
-    }
-}
-
 /* Neo Geo visible framebuffer dimensions */
 #define NEO_FB_W 304
 #define NEO_FB_H 224
@@ -749,12 +666,6 @@ static void neo_video_task(void *arg) {
 
         ili9341_write_frame_rgb565_custom(frame, NEO_FB_W, NEO_FB_H, 2.0f, false);
 
-        /* Blit sidebar button labels after frame push */
-        if (sidebar_countdown > 0) {
-            neo_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-
         xQueueReceive(neo_vidQueue, &frame, portMAX_DELAY);
     }
 
@@ -825,10 +736,6 @@ int screen_init(void) {
     /* Video task is created lazily in screen_update() so it doesn't
      * consume internal DMA RAM before the sprite bounce buffer is
      * allocated during ROM loading. */
-
-    /* Pre-render sidebar button labels (MENU / VOL) */
-    neo_init_sidebar_buttons();
-    sidebar_countdown = 2;
 
     /* Allocate state_img / state_img_tmp pixel buffers for save states.
      * 304×224 @ 16bpp = 136,192 bytes each.  We set .pixels here so
@@ -909,10 +816,6 @@ void screen_update(void) {
     } else {
         /* Fallback: synchronous push */
         ili9341_write_frame_rgb565_custom(lcd_fb, vis_w, vis_h, 2.0f, false);
-        if (sidebar_countdown > 0) {
-            neo_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
     }
 }
 
@@ -1219,7 +1122,6 @@ int handle_event(void) {
     /* VOLUME: touch right shoulder or mapped button */
     if (gp.values[ODROID_INPUT_VOLUME] && !gp_prev.values[ODROID_INPUT_VOLUME]) {
         neo_show_volume();
-        sidebar_countdown = 2;  /* re-draw sidebar labels after overlay */
     }
 
     /* MENU: touch left shoulder */
@@ -1229,7 +1131,6 @@ int handle_event(void) {
             gp_prev = gp;
             return 1;  /* non-zero = open menu → quit */
         }
-        sidebar_countdown = 2;  /* re-draw sidebar labels after overlay */
     }
 
     gp_prev = gp;
