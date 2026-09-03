@@ -603,7 +603,7 @@ class TIA : public Device
     // Determines whether specified bits (from TIABit) are enabled or disabled
     // This is and'ed with the enabled objects each scanline to mask out any
     // objects we don't want to be processed
-    uInt8 myDisabledObjects;
+    uInt8 myDisabledObjects{0};
 
     // Indicates if color loss should be enabled or disabled.  Color loss
     // occurs on PAL (and maybe SECAM) systems when the previous frame

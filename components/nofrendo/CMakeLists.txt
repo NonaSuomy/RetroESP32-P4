@@ -98,6 +98,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=sign-compare
     -Wno-error=old-style-definition
     -Wno-error=missing-declarations
+    -Wno-error=builtin-declaration-mismatch
+    -Wno-error=attributes
+    -Wno-error=implicit-fallthrough
     -Wno-error=missing-prototypes
     -Wno-error=stringop-truncation
 )

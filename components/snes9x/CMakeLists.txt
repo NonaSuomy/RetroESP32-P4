@@ -49,6 +49,8 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=old-style-definition
     -Wno-error=maybe-uninitialized
     -Wno-error=implicit-int
+    -Wno-error=implicit-fallthrough
+    -Wno-error=unterminated-string-initialization
     -O3
 )
 

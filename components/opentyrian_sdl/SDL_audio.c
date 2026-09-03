@@ -104,7 +104,7 @@ int SDL_BuildAudioCVT(SDL_AudioCVT *cvt, Uint16 src_format, Uint8 src_channels,
     return 0;
 }
 
-IRAM_ATTR int SDL_ConvertAudio(SDL_AudioCVT *cvt)
+int SDL_ConvertAudio(SDL_AudioCVT *cvt)
 {
     /*
      * On P4 with ES8311 codec, we output proper signed 16-bit PCM.

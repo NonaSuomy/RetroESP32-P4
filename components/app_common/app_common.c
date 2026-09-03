@@ -96,6 +96,26 @@ static void crash_guard_timer_cb(TimerHandle_t xTimer)
     xTimerDelete(xTimer, 0);
 }
 
+/* Emulator images live in OTA slots, while the launcher is the factory
+ * image.  A normal launch is an intentional software reset from the
+ * launcher.  Any other reset (reset button, power-cycle, watchdog, panic)
+ * must not strand the user in the last emulator slot. */
+static void return_to_launcher_on_external_reset(void)
+{
+    esp_reset_reason_t reason = esp_reset_reason();
+    if (reason == ESP_RST_SW) return;
+
+    const esp_partition_t *factory = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+    if (factory != NULL) {
+        ESP_LOGW(TAG, "Reset reason %d outside launcher handoff; booting factory launcher", reason);
+        esp_ota_set_boot_partition(factory);
+        esp_restart();
+    } else {
+        ESP_LOGE(TAG, "Factory launcher partition not found");
+    }
+}
+
 /* ─── Full hardware init ──────────────────────────────────────── */
 void app_init(void)
 {
@@ -108,6 +128,8 @@ void app_init(void)
         nvs_flash_erase();
         nvs_flash_init();
     }
+
+    return_to_launcher_on_external_reset();
 
     /* 2. Crash-guard: detect crash loops BEFORE hardware init */
     crash_guard_check();
@@ -123,6 +145,9 @@ void app_init(void)
 
     /* 5. Gamepad polling */
     odroid_input_gamepad_init();
+    /* Emulator apps share the same landscape touch overlay. The launcher
+       leaves it disabled and only uses GT911 for its UI zones/search. */
+    odroid_input_touch_game_controls_enable(true);
 
     /* 6. Mount SD card */
     odroid_sdcard_open("/sd");

@@ -2,9 +2,9 @@
  * Odroid Display Compatibility Layer for ESP32-P4
  *
  * Provides the original ILI9341 API surface.
- * Internally renders to a 320×240 PSRAM framebuffer, then uses
- * PPA hardware to rotate (270° CCW) and scale (2×) for the
- * 480×800 MIPI DSI display.
+ * Internally renders the launcher at 800×480 landscape, then uses
+ * PPA hardware to rotate 180° and center it on the 1024×600 MIPI DSI
+ * display. Emulator frames use the same landscape orientation.
  */
 #pragma once
 
@@ -44,8 +44,8 @@ void ili9341_write_frame_rectangleLE(int x, int y, int w, int h, const uint16_t 
 void ili9341_clear(uint16_t color);
 
 /**
- * @brief Flush the 320×240 framebuffer to the physical LCD.
- * Performs PPA rotate 270° CCW → scale 2× → display centered on 480×800.
+ * @brief Flush the 800×480 launcher framebuffer to the physical LCD.
+ * Performs PPA rotate 180° → scale → display centered on 1024×600.
  * Only flushes if the framebuffer has been modified since the last flush.
  */
 void display_flush(void);
@@ -57,8 +57,8 @@ void display_flush_force(void);
 
 /**
  * @brief Set custom PPA scale factors for the rotate+scale pipeline.
- * Default is 2.0×2.0 (320×240 → 480×640). For example, 2.0×2.5
- * fills the full 480×800 LCD after 270° rotation.
+ * The default launcher scale is 1.0×1.0. Emulator-specific writers
+ * choose their own scale and keep the output landscape.
  * @param sx  Horizontal scale factor (applied after rotation)
  * @param sy  Vertical scale factor (applied after rotation)
  */
@@ -83,21 +83,50 @@ uint16_t *display_get_framebuffer(void);
 uint16_t *display_get_emu_buffer(void);
 
 /**
- * @brief Flush the 320×240 emulator buffer via PPA 2× scale + 270° rotate → 480×640 LCD.
+ * @brief Flush the 320×240 emulator buffer via PPA 2× scale + 180° rotate → 640×480 LCD.
  */
 void display_emu_flush(void);
 
 /**
- * @brief Draw raw RGB565 pixels directly to the LCD at portrait coordinates.
+ * @brief Draw raw RGB565 pixels directly to the LCD at physical landscape
+ * coordinates.
  * Thread-safe (takes/releases the display lock).
- * @param x  Portrait x position
- * @param y  Portrait y position
- * @param w  Width in pixels (portrait x direction)
- * @param h  Height in pixels (portrait y direction)
+ * @param x  Physical LCD x position (0..1023)
+ * @param y  Physical LCD y position (0..599)
+ * @param w  Width in physical LCD pixels
+ * @param h  Height in physical LCD pixels
  * @param data  RGB565 pixel data (w*h elements, DMA-capable memory)
  */
 void display_lcd_draw_raw(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                           const uint16_t *data);
+
+/* ─── Landscape touch coordinate and emulator touch controls ──── */
+
+/**
+ * Convert a GT911 physical LCD point into the 800×480 launcher coordinate
+ * space. The conversion accounts for the centered content and the display's
+ * 180° image rotation. Returns false for the unused panel border.
+ */
+bool odroid_display_touch_to_ui(uint16_t touch_x, uint16_t touch_y,
+                                int *ui_x, int *ui_y);
+
+/**
+ * Tell the display where the current emulator frame is located. The display
+ * uses this to draw touch controls in the same landscape coordinate space.
+ */
+void odroid_display_set_touch_game_layout(uint16_t x, uint16_t y,
+                                          uint16_t w, uint16_t h);
+
+/** Return the current physical LCD rectangle occupied by the game image. */
+void odroid_display_get_touch_game_layout(uint16_t *x, uint16_t *y,
+                                          uint16_t *w, uint16_t *h);
+
+/** Convert a GT911 point into the current emulator's 800×480 touch space. */
+bool odroid_display_touch_to_game(uint16_t touch_x, uint16_t touch_y,
+                                  int *game_x, int *game_y);
+
+/** Enable/disable visible on-screen controls and their touch input mapping. */
+void odroid_display_touch_controls_set_enabled(bool enabled);
 
 /* ─── Emulator-specific display write functions ───────────────── */
 
@@ -150,7 +179,7 @@ void ili9341_write_frame_lynx(const uint16_t *buffer);
 
 /**
  * @brief Write a pre-rendered RGB565 framebuffer (320×240, LE byte-swapped).
- * Uses PPA hardware to scale 2× and rotate 270° in one operation.
+ * Uses PPA hardware to scale 2× and rotate 180° in one operation.
  * @param buffer  320×240 RGB565 pixels in little-endian byte order, or NULL to clear
  */
 void ili9341_write_frame_rgb565(const uint16_t *buffer);
@@ -164,7 +193,7 @@ void ili9341_write_frame_rgb565_ex(const uint16_t *buffer, bool byte_swap_input)
 
 /**
  * @brief Write an arbitrary-size RGB565 framebuffer with PPA scale + rotate.
- * PPA scales by 'scale' and rotates 270°, centered on the 480×800 LCD.
+ * PPA scales by 'scale' and rotates 180°, centered on the 1024×600 LCD.
  * Manages PPA buffer, border clearing, and display locking internally.
  * @param buffer          RGB565 pixels (in_w × in_h), or NULL to clear
  * @param in_w            Input width in pixels

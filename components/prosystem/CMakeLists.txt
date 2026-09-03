@@ -47,4 +47,5 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=misleading-indentation
     -Wno-error=unused-const-variable
     -Wno-error=address-of-packed-member
+    -Wno-error=missing-field-initializers
 )

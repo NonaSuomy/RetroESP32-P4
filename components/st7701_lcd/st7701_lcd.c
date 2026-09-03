@@ -16,21 +16,21 @@
 #include "esp_cache.h"
 #include <string.h>
 
-#include "esp_lcd_st7701.h"
+#include "esp_lcd_ek79007.h"
 #include "st7701_lcd.h"
 #include "ppa_engine.h"
 
-#define LCD_H_RES 480
-#define LCD_V_RES 800
+#define LCD_H_RES 1024
+#define LCD_V_RES 600
 
-#define MIPI_DPI_PX_FORMAT (LCD_COLOR_PIXEL_FORMAT_RGB565)
+#define MIPI_DPI_PX_FORMAT (LCD_COLOR_FMT_RGB565)
 #define LCD_BIT_PER_PIXEL (16)
 
 #define EXAMPLE_MIPI_DSI_PHY_PWR_LDO_CHAN       3
 #define EXAMPLE_MIPI_DSI_PHY_PWR_LDO_VOLTAGE_MV 2500
 #define EXAMPLE_LCD_BK_LIGHT_ON_LEVEL           1
 #define EXAMPLE_LCD_BK_LIGHT_OFF_LEVEL          0
-#define EXAMPLE_PIN_NUM_BK_LIGHT                GPIO_NUM_23
+#define EXAMPLE_PIN_NUM_BK_LIGHT                GPIO_NUM_20
 
 static const char *TAG = "st7701_lcd";
 
@@ -69,23 +69,21 @@ esp_err_t st7701_lcd_init(void)
 
     // Create MIPI DSI bus
     esp_lcd_dsi_bus_handle_t mipi_dsi_bus;
-    esp_lcd_dsi_bus_config_t bus_config = ST7701_PANEL_BUS_DSI_2CH_CONFIG();
+    esp_lcd_dsi_bus_config_t bus_config = EK79007_PANEL_BUS_DSI_2CH_CONFIG();
+    bus_config.lane_bit_rate_mbps = 1000;
     ESP_ERROR_CHECK(esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus));
 
     ESP_LOGI(TAG, "Install MIPI DSI LCD control panel");
-    esp_lcd_dbi_io_config_t dbi_config = ST7701_PANEL_IO_DBI_CONFIG();
+    esp_lcd_dbi_io_config_t dbi_config = EK79007_PANEL_IO_DBI_CONFIG();
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &s_io_handle));
 
     // Create DPI panel config
-    esp_lcd_dpi_panel_config_t dpi_config = ST7701_480_800_PANEL_60HZ_DPI_CONFIG(MIPI_DPI_PX_FORMAT);
+    esp_lcd_dpi_panel_config_t dpi_config = EK79007_1024_600_PANEL_60HZ_CONFIG_CF(MIPI_DPI_PX_FORMAT);
 
-    st7701_vendor_config_t vendor_config = {
+    ek79007_vendor_config_t vendor_config = {
         .mipi_config = {
             .dsi_bus = mipi_dsi_bus,
             .dpi_config = &dpi_config,
-        },
-        .flags = {
-            .use_mipi_interface = 1,
         }
     };
 
@@ -95,9 +93,10 @@ esp_err_t st7701_lcd_init(void)
         .bits_per_pixel = 16,
         .vendor_config = &vendor_config,
     };
-    ESP_ERROR_CHECK(esp_lcd_new_panel_st7701(s_io_handle, &panel_config, &s_panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_ek79007(s_io_handle, &panel_config, &s_panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel_handle));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel_handle, true));
 
     // Clear DPI framebuffer to black BEFORE turning on backlight
     // to avoid a white flash from uninitialized DPI buffer

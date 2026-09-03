@@ -24,6 +24,10 @@
 #include <stdbool.h>
 #include "esp_attr.h"
 
+#ifndef EXT_RAM_ATTR
+#define EXT_RAM_ATTR EXT_RAM_BSS_ATTR
+#endif
+
 #define COUNTOF(x) ((unsigned)(sizeof(x) / sizeof *(x)))  // use only on arrays!
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -67,4 +71,3 @@ void opentyrian_menu( void );
 int main( int argc, char *argv[] );
 
 #endif /* OPENTYR_H */
-

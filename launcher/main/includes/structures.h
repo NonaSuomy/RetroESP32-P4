@@ -70,7 +70,7 @@ typedef struct{
   int bg;
   int fg;
   int hl;
-  char name[10];
+  char name[11];
 } THEME;
 THEME THEMES[22] = {
 	{63877,35043,20610,"grapefruit"},
@@ -97,5 +97,4 @@ THEME THEMES[22] = {
 	{65535,33840,16904,"cloud"},
 };
 THEME GUI;
-
 

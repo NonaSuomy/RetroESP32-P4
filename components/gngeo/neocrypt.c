@@ -49,6 +49,9 @@
 //#include "driver.h"
 //#include "neogeo.h"
 #include "resfile.h"
+#ifdef BIT
+#undef BIT
+#endif
 #include "mame_layer.h"
 #include "menu.h"
 
@@ -1686,5 +1689,4 @@ void kof2003biosdecode(running_machine *machine)
 		memcpy(src,buf,0x80000);
 		free(buf);
 }
-
 

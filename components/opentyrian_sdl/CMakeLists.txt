@@ -10,7 +10,6 @@ idf_component_register(
 
 # Suppress warnings from SDL compatibility code
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -Wno-pointer-sign
     -Wno-int-conversion
     -Wno-incompatible-pointer-types
 )

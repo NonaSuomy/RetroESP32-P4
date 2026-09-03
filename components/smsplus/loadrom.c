@@ -21,6 +21,7 @@
  ******************************************************************************/
 
 #include "shared.h"
+#include <stdbool.h>
 
 extern unsigned long crc32(unsigned long crc, const unsigned char *buf, unsigned int len);
 
@@ -364,6 +365,7 @@ void set_config()
 int load_rom (char *filename)
 {
     FILE *fd = NULL;
+    bool is_coleco = false;
 
     size_t nameLength = strlen(filename);
     if (nameLength < 4)
@@ -373,24 +375,48 @@ int load_rom (char *filename)
         abort();
      }
 
-    if (strcmp(filename + (nameLength - 4), ".col") == 0)
+    is_coleco = (strcasecmp(filename + (nameLength - 4), ".col") == 0);
+    if (is_coleco)
     {
         fd = fopen("/sd/roms/col/BIOS.col", "rb");
-        if(!fd) abort();
+        if (!fd) {
+            printf("load_rom: ColecoVision BIOS missing: /sd/roms/col/BIOS.col\n");
+            printf("load_rom: place an 8192-byte ColecoVision BIOS file at that path\n");
+            return 0;
+        }
 
         coleco.rom = ESP32_PSRAM + 0x100000;
 
-        fread(coleco.rom, 0x2000, 1, fd);
+        fseek(fd, 0, SEEK_END);
+        long bios_size = ftell(fd);
+        fseek(fd, 0, SEEK_SET);
+        if (bios_size < 0x2000) {
+            printf("load_rom: ColecoVision BIOS is too small (%ld bytes, need 8192)\n",
+                   bios_size);
+            fclose(fd);
+            return 0;
+        }
+        size_t bios_read = fread(coleco.rom, 1, 0x2000, fd);
+        if (bios_read != 0x2000) {
+            printf("load_rom: ColecoVision BIOS read failed (%d/8192 bytes)\n",
+                   (int)bios_read);
+            fclose(fd);
+            return 0;
+        }
 
         fclose(fd);
 
         option.console = 6;
-        printf("Colecovision BIOS loaded.\n");
+        printf("ColecoVision BIOS loaded (%ld-byte file, using first 8192 bytes).\n",
+               bios_size);
     }
 
 
     fd = fopen(filename, "rb");
-    if(!fd) abort();
+    if (!fd) {
+        printf("load_rom: cannot open cartridge '%s'\n", filename);
+        return 0;
+    }
 
     /* Seek to end of file, and get size */
 
@@ -398,12 +424,24 @@ int load_rom (char *filename)
     size_t actual_size = ftell(fd);
     fseek(fd, 0, SEEK_SET);
 
+    if (actual_size == 0 || actual_size > 0x200000) {
+        printf("load_rom: invalid cartridge size %d bytes\n", (int)actual_size);
+        fclose(fd);
+        return 0;
+    }
+
     cart.size = actual_size;
     if (cart.size < 0x4000) cart.size = 0x4000;
 
     cart.rom = ESP32_PSRAM;
-    size_t cnt = fread(cart.rom, cart.size, 1, fd);
-    //if (cnt != 1) abort();
+    memset(cart.rom, 0, cart.size);
+    size_t cnt = fread(cart.rom, 1, actual_size, fd);
+    if (cnt != actual_size) {
+        printf("load_rom: cartridge read failed (%d/%d bytes)\n",
+               (int)cnt, (int)actual_size);
+        fclose(fd);
+        return 0;
+    }
 
     fclose(fd);
 
@@ -422,7 +460,7 @@ int load_rom (char *filename)
   /* 16k pages */
   cart.pages = cart.size / 0x4000;
 
-  cart.crc = crc32(0, cart.rom, option.console == 6 ? actual_size : cart.size);
+  cart.crc = crc32(0, cart.rom, is_coleco ? actual_size : cart.size);
   cart.loaded = 1;
 
   set_config();

@@ -551,7 +551,7 @@ uint16_t* displayBuffer[2];
 static uint8_t currentBuffer;
 static uint16_t* framebuffer_ptr;
 
-static int32_t* audioBuffer[2];
+static int16_t* audioBuffer[2];
 static volatile uint8_t currentAudioBuffer;
 static volatile uint16_t currentAudioSampleCount;
 static volatile int16_t* currentAudioBufferPtr;
@@ -695,7 +695,8 @@ void gnuboy_run(const char *rom_path)
     memset(&pcm, 0, sizeof(pcm));
     pcm.hz = AUDIO_SAMPLE_RATE;
     pcm.stereo = 1;
-    pcm.len = audioBufferLength;
+    /* pcm.pos counts interleaved L/R samples, not stereo frames. */
+    pcm.len = audioBufferLength * 2;
     pcm.buf = heap_caps_malloc(AUDIO_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
     pcm.pos = 0;
 

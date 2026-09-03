@@ -44,6 +44,23 @@ extern "C" {
 #define GAMEPAD_DPAD_LEFT       0x04
 #define GAMEPAD_DPAD_RIGHT      0x08
 
+/* USB keyboard controls exposed alongside gamepad state. */
+#define GAMEPAD_KEY_UP          (1U << 0)
+#define GAMEPAD_KEY_DOWN        (1U << 1)
+#define GAMEPAD_KEY_LEFT        (1U << 2)
+#define GAMEPAD_KEY_RIGHT       (1U << 3)
+#define GAMEPAD_KEY_A           (1U << 4)  /* Z */
+#define GAMEPAD_KEY_B           (1U << 5)  /* X */
+#define GAMEPAD_KEY_X           (1U << 6)  /* A */
+#define GAMEPAD_KEY_Y           (1U << 7)  /* S */
+#define GAMEPAD_KEY_L           (1U << 8)  /* Q */
+#define GAMEPAD_KEY_R           (1U << 9)  /* W */
+#define GAMEPAD_KEY_SELECT      (1U << 10) /* Shift */
+#define GAMEPAD_KEY_START       (1U << 11) /* Enter */
+#define GAMEPAD_KEY_MENU        (1U << 12) /* Escape */
+#define GAMEPAD_KEY_VOLUME_DOWN (1U << 13) /* - */
+#define GAMEPAD_KEY_VOLUME_UP   (1U << 14) /* = */
+
 /* ========================= Gamepad State ========================= */
 
 /**
@@ -59,6 +76,7 @@ typedef struct {
     uint16_t brake;         /**< L2 trigger analog (0..1023) */
     uint16_t throttle;      /**< R2 trigger analog (0..1023) */
     uint8_t  dpad;          /**< D-pad bitmask (see GAMEPAD_DPAD_*) */
+    uint32_t keyboard_keys; /**< Current USB keyboard key mask */
 } gamepad_state_t;
 
 /* ========================= Configuration ========================= */
@@ -112,6 +130,16 @@ void gamepad_get_state(gamepad_state_t *state);
  * @return true if connected
  */
 bool gamepad_is_connected(void);
+
+/**
+ * @brief Check if a USB HID keyboard is currently connected.
+ *
+ * Keyboards are kept separate from gamepad_connected because their reports
+ * use the fixed Z/X/arrows mapping, but the launcher still needs to know
+ * that the keyboard interface is alive while a composite controller is
+ * being initialized.
+ */
+bool gamepad_is_keyboard_connected(void);
 
 /**
  * @brief Convert a button bitmask to a human-readable string

@@ -15,19 +15,21 @@
  *   SELECT              → ODROID_INPUT_SELECT
  *   START               → ODROID_INPUT_START
  *
- * Touch virtual buttons (landscape orientation, portrait coords):
- *   Touch y < 170       → ODROID_INPUT_MENU   (left shoulder)
- *   Touch y > 630       → ODROID_INPUT_VOLUME (right shoulder)
+ * Touch virtual buttons use the physical 1024×600 landscape panel. The
+ * display helper accounts for the centered viewport and 180° image rotation.
  */
 
 #include "odroid_input.h"
+#include "odroid_display.h"
 #include "gamepad.h"   /* gamepad_is_connected() */
+#include "elecrow_esp32_p4_aio.h"
 #ifndef CONFIG_HDMI_OUTPUT
 #include "gt911_touch.h"
 #endif
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_adc/adc_oneshot.h"
@@ -37,23 +39,38 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-/* Touch zone thresholds (GT911 portrait coords, 480×800) */
+/* Touch is sampled often enough for games, while avoiding an I2C transaction
+ * on every emulator frame. Coordinates are converted to the active landscape
+ * game viewport by odroid_display.c. */
 #ifndef CONFIG_HDMI_OUTPUT
-#define TOUCH_MENU_Y_MAX   170   /* y < 170 → left shoulder (landscape left)  */
-#define TOUCH_VOL_Y_MIN    630   /* y > 630 → right shoulder (landscape right) */
-
-/* Touch panel is sampled at most 2 Hz (every 500 ms) to avoid ~10% CPU overhead */
-#define TOUCH_POLL_INTERVAL_US  500000LL
+#define TOUCH_POLL_INTERVAL_US  20000LL
 #endif
 
 static const char *TAG = "odroid_input";
 static bool s_initialized = false;
+static uint32_t s_last_logged_input_mask = 0;
+static uint32_t s_last_logged_keyboard_mask = UINT32_MAX;
+static uint32_t s_last_logged_gp_buttons = UINT32_MAX;
+static uint8_t s_last_logged_gp_dpad = 0xff;
 
 #ifndef CONFIG_HDMI_OUTPUT
-/* Cached touch state — updated at 2 Hz */
-static volatile int s_touch_menu   = 0;
-static volatile int s_touch_volume = 0;
-static int64_t      s_touch_last_us = 0;
+/* Cached touch state — updated at 50 Hz. Bit values are private to this file. */
+enum {
+    TOUCH_GAME_UP = 1 << 0,
+    TOUCH_GAME_DOWN = 1 << 1,
+    TOUCH_GAME_LEFT = 1 << 2,
+    TOUCH_GAME_RIGHT = 1 << 3,
+    TOUCH_GAME_SELECT = 1 << 4,
+    TOUCH_GAME_START = 1 << 5,
+    TOUCH_GAME_A = 1 << 6,
+    TOUCH_GAME_B = 1 << 7,
+    TOUCH_GAME_MENU = 1 << 8,
+    TOUCH_GAME_VOLUME = 1 << 9,
+};
+static volatile uint16_t s_touch_game_mask = 0;
+static int64_t s_touch_last_us = 0;
+static bool s_touch_game_enabled = false;
+static uint16_t s_touch_last_raw_x = 0, s_touch_last_raw_y = 0;
 #endif
 
 /* ─── Paddle ADC (GPIO 51 = ADC2_CH2 on ESP32-P4) ───────────────── */
@@ -95,9 +112,6 @@ static int64_t      s_touch_last_us = 0;
 #define ADC_THRESH_MID_LO  1200   /* second press: 1200..2200 (measured ~1650) */
 #define ADC_THRESH_MID_HI  2200
 
-static bool s_gpio_pad_detected = false;
-static bool s_gpio_pad_l2_stuck = false; /* GPIO 30 (L2/R) reads HIGH despite pull-down */
-static adc_oneshot_unit_handle_t s_gpio_pad_adc = NULL;
 #endif /* !CONFIG_HDMI_OUTPUT */
 
 volatile int odroid_paddle_adc_raw = -1;
@@ -126,144 +140,130 @@ static bool s_usb_map_loaded = false;
 static uint16_t s_usb_map_vid = 0;  /* VID of the currently loaded map */
 static uint16_t s_usb_map_pid = 0;  /* PID of the currently loaded map */
 
-/* ─── GPIO gamepad detection & init ──────────────────────────────── */
-#ifndef CONFIG_HDMI_OUTPUT
-static void gpio_pad_detect_and_init(void)
-{
-    /* Detection: pull-up GPIO 29 (L1), read. If 0 → custom pad connected
-       (the physical pull-down on the gamepad board wins). */
-    gpio_config_t detect_cfg = {
-        .pin_bit_mask  = 1ULL << GPIO_PAD_L1,
-        .mode          = GPIO_MODE_INPUT,
-        .pull_up_en    = GPIO_PULLUP_ENABLE,
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&detect_cfg);
-    vTaskDelay(pdMS_TO_TICKS(5));   /* let the pull settle */
-
-    if (gpio_get_level(GPIO_PAD_L1) != 0) {
-        ESP_LOGI(TAG, "GPIO gamepad not detected (GPIO %d reads HIGH)", GPIO_PAD_L1);
-        /* Reconfigure L1 pin back to default to avoid interfering */
-        gpio_reset_pin(GPIO_PAD_L1);
-        return;
-    }
-
-    ESP_LOGI(TAG, "GPIO gamepad DETECTED (GPIO %d reads LOW)", GPIO_PAD_L1);
-    s_gpio_pad_detected = true;
-
-    /* Configure digital button GPIOs as input with internal pull-down.
-       Some boards lack physical pull-downs, causing floating pins to
-       read HIGH and produce phantom button presses (e.g. GPIO 30 → R). */
-    const int dig_pins[] = { GPIO_PAD_L1, GPIO_PAD_L2, GPIO_PAD_X,
-                             GPIO_PAD_Y, GPIO_PAD_START, GPIO_PAD_SELECT };
-    for (int i = 0; i < sizeof(dig_pins)/sizeof(dig_pins[0]); i++) {
-        gpio_config_t cfg = {
-            .pin_bit_mask  = 1ULL << dig_pins[i],
-            .mode          = GPIO_MODE_INPUT,
-            .pull_up_en    = GPIO_PULLUP_DISABLE,
-            .pull_down_en  = GPIO_PULLDOWN_ENABLE,
-            .intr_type     = GPIO_INTR_DISABLE,
-        };
-        gpio_config(&cfg);
-    }
-
-    /* Check if GPIO 30 (L2 → R) is stuck HIGH despite internal pull-down.
-       If so, skip reading it at runtime to avoid phantom R presses. */
-    vTaskDelay(pdMS_TO_TICKS(2));
-    if (gpio_get_level(GPIO_PAD_L2)) {
-        s_gpio_pad_l2_stuck = true;
-        ESP_LOGW(TAG, "GPIO %d (L2/R) stuck HIGH despite pull-down — disabling", GPIO_PAD_L2);
-    }
-
-    /* Set up ADC2 for the three analog inputs (CH0=joy LR, CH1=joy UD, CH3=AB) */
-    if (!s_gpio_pad_adc) {
-        adc_oneshot_unit_init_cfg_t unit_cfg = {
-            .unit_id = ADC_UNIT_2,
-        };
-        esp_err_t adc_err = adc_oneshot_new_unit(&unit_cfg, &s_gpio_pad_adc);
-        if (adc_err != ESP_OK) {
-            ESP_LOGW(TAG, "GPIO pad: ADC2 unit init failed (%s)", esp_err_to_name(adc_err));
-            s_gpio_pad_detected = false;
-            return;
-        }
-
-        adc_oneshot_chan_cfg_t chan_cfg = {
-            .atten   = ADC_ATTEN_DB_12,
-            .bitwidth = ADC_BITWIDTH_12,
-        };
-        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_0, &chan_cfg);  /* GPIO 49 LR */
-        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_1, &chan_cfg);  /* GPIO 50 UD */
-        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_3, &chan_cfg);  /* GPIO 52 AB */
-    }
-
-    ESP_LOGI(TAG, "GPIO gamepad initialized: analog(49,50,52) digital(28,29,30,32,34,35)");
-}
-
-/* Read the custom GPIO gamepad and OR into the state */
-static void gpio_pad_read(odroid_gamepad_state *state)
-{
-    if (!s_gpio_pad_detected || !s_gpio_pad_adc) return;
-
-    int joy_lr = 0, joy_ud = 0, ab_val = 0;
-    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_0, &joy_lr);
-    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_1, &joy_ud);
-    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_3, &ab_val);
-
-    /* Joy left/right (GPIO 49) */
-    if (joy_lr > ADC_THRESH_HIGH)
-        state->values[ODROID_INPUT_LEFT] = 1;
-    else if (joy_lr > ADC_THRESH_MID_LO && joy_lr < ADC_THRESH_MID_HI)
-        state->values[ODROID_INPUT_RIGHT] = 1;
-
-    /* Joy up/down (GPIO 50) */
-    if (joy_ud > ADC_THRESH_HIGH)
-        state->values[ODROID_INPUT_UP] = 1;
-    else if (joy_ud > ADC_THRESH_MID_LO && joy_ud < ADC_THRESH_MID_HI)
-        state->values[ODROID_INPUT_DOWN] = 1;
-
-    /* A/B buttons (GPIO 52) */
-    if (ab_val > ADC_THRESH_HIGH)
-        state->values[ODROID_INPUT_A] = 1;
-    else if (ab_val > ADC_THRESH_MID_LO && ab_val < ADC_THRESH_MID_HI)
-        state->values[ODROID_INPUT_B] = 1;
-
-    /* Digital buttons — all active HIGH (pressed = 1) */
-    if (gpio_get_level(GPIO_PAD_L1))     state->values[ODROID_INPUT_L] = 1;
-    if (!s_gpio_pad_l2_stuck && gpio_get_level(GPIO_PAD_L2))
-                                         state->values[ODROID_INPUT_R] = 1;
-    if (gpio_get_level(GPIO_PAD_X))      state->values[ODROID_INPUT_X] = 1;
-    if (gpio_get_level(GPIO_PAD_Y))      state->values[ODROID_INPUT_Y] = 1;
-    if (gpio_get_level(GPIO_PAD_START))  state->values[ODROID_INPUT_START] = 1;
-    if (gpio_get_level(GPIO_PAD_SELECT)) state->values[ODROID_INPUT_SELECT] = 1;
-
-    /* Read paddle ADC (GPIO 51 = ADC2_CH2) if initialized */
-    if (s_paddle_adc_handle) {
-        int raw = 0;
-        if (adc_oneshot_read(s_paddle_adc_handle, PADDLE_ADC_CHANNEL, &raw) == ESP_OK) {
-            odroid_paddle_adc_raw = raw;
-        }
-    }
-}
-#endif /* !CONFIG_HDMI_OUTPUT */
+/* Elecrow controls live in their own board component. */
 
 void odroid_input_gamepad_init(void)
 {
     if (s_initialized) return;
 
 #ifndef CONFIG_HDMI_OUTPUT
-    /* Detect and init custom GPIO gamepad (if connected) */
-    gpio_pad_detect_and_init();
+    elecrow_esp32_p4_aio_init();
 #endif
 
     /* USB gamepad is initialized in odroid_system_init() */
     s_initialized = true;
 #ifndef CONFIG_HDMI_OUTPUT
-    ESP_LOGI(TAG, "Input subsystem ready (USB HID gamepad%s)",
-             s_gpio_pad_detected ? " + GPIO gamepad" : "");
+    ESP_LOGI(TAG, "Input subsystem ready (USB HID keyboard + Elecrow AIO controls)");
 #else
     ESP_LOGI(TAG, "Input subsystem ready (USB HID gamepad, HDMI mode)");
 #endif
+}
+
+#ifndef CONFIG_HDMI_OUTPUT
+static uint16_t touch_read_game_mask(uint16_t *raw_x, uint16_t *raw_y,
+                                     bool *touched, int *mapped_x, int *mapped_y)
+{
+    uint16_t tx = 0, ty = 0;
+    bool down = gt911_touch_get_xy(&tx, &ty);
+    uint16_t mask = 0;
+    int gx = -1, gy = -1;
+    /* Keep the debug coordinates in the same source-framebuffer space used
+     * by PAPP touch_read(). Side-button hit testing below remains in final
+     * physical LCD coordinates because the overlay is drawn there directly. */
+    (void)odroid_display_touch_to_game(tx, ty, &gx, &gy);
+
+    /* Controls are drawn in final physical LCD coordinates. The game image
+     * itself is rotated 180 degrees by PPA, but the GT911 reports physical
+     * coordinates, so these side zones must not be flipped. */
+    uint16_t game_x = 192, game_y = 60, game_w = 640, game_h = 480;
+    odroid_display_get_touch_game_layout(&game_x, &game_y, &game_w, &game_h);
+    int left_w = game_x;
+    int right_x = (int)game_x + game_w;
+    int right_w = 1024 - right_x;
+    (void)game_y;
+    (void)game_h;
+
+    if (down && left_w > 0 && tx < game_x) {
+        int lx = tx;
+        /* Side controls use the same 180-degree physical arrangement as
+         * the game image: select is at the top and menu at the bottom. */
+        if (ty < 65) {
+            mask |= TOUCH_GAME_SELECT;
+        } else if (ty >= 525) {
+            mask |= TOUCH_GAME_MENU;
+        } else {
+            /* Match the left-margin D-pad, with a smaller geometry for
+             * Duke3D's 128-pixel side margins. */
+            int dx = lx - left_w / 2;
+            int dy = (int)ty - (600 - 315);
+            int dead = left_w > 160 ? 30 : 22;
+            if (abs(dx) > abs(dy)) {
+                if (dx < -dead) mask |= TOUCH_GAME_LEFT;
+                else if (dx > dead) mask |= TOUCH_GAME_RIGHT;
+            } else {
+                if (dy < -dead) mask |= TOUCH_GAME_UP;
+                else if (dy > dead) mask |= TOUCH_GAME_DOWN;
+            }
+        }
+    } else if (down && right_w > 0 && tx >= right_x) {
+        int rx = tx - right_x;
+        /* Volume is at the bottom and START at the top after the 180-degree
+         * rotation. A/B use their rotated physical positions. */
+        if (ty < 65) {
+            mask |= TOUCH_GAME_START;
+        } else if (ty >= 525) {
+            mask |= TOUCH_GAME_VOLUME;
+        } else {
+            int radius = right_w > 160 ? 42 : 31;
+            int da_x = rx - right_w * 66 / 100, da_y = (int)ty - (600 - 270);
+            int db_x = rx - right_w * 32 / 100, db_y = (int)ty - (600 - 380);
+            if (da_x * da_x + da_y * da_y <= radius * radius) mask |= TOUCH_GAME_A;
+            if (db_x * db_x + db_y * db_y <= radius * radius) mask |= TOUCH_GAME_B;
+        }
+    }
+
+    if (raw_x) *raw_x = tx;
+    if (raw_y) *raw_y = ty;
+    if (touched) *touched = down;
+    if (mapped_x) *mapped_x = gx;
+    if (mapped_y) *mapped_y = gy;
+    return mask;
+}
+
+static void touch_poll(void)
+{
+    int64_t now = esp_timer_get_time();
+    if (now - s_touch_last_us < TOUCH_POLL_INTERVAL_US) return;
+    s_touch_last_us = now;
+
+    uint16_t tx = 0, ty = 0;
+    bool touched = false;
+    int gx = -1, gy = -1;
+    uint16_t mask = touch_read_game_mask(&tx, &ty, &touched, &gx, &gy);
+    if (!s_touch_game_enabled) {
+        mask &= TOUCH_GAME_MENU | TOUCH_GAME_VOLUME;
+    }
+    if (odroid_input_touch_buttons_disable) mask = 0;
+
+    if (mask != s_touch_game_mask || tx != s_touch_last_raw_x || ty != s_touch_last_raw_y) {
+        if (touched || s_touch_game_mask != 0) {
+            ESP_LOGI(TAG, "Touch %s raw=(%u,%u) game=(%d,%d) mask=0x%04x",
+                     touched ? "down" : "up", tx, ty, gx, gy, mask);
+        }
+        s_touch_last_raw_x = tx;
+        s_touch_last_raw_y = ty;
+    }
+    s_touch_game_mask = mask;
+}
+#endif
+
+void odroid_input_touch_game_controls_enable(bool enabled)
+{
+#ifndef CONFIG_HDMI_OUTPUT
+    s_touch_game_enabled = enabled;
+    s_touch_game_mask = 0;
+#endif
+    odroid_display_touch_controls_set_enabled(enabled);
 }
 
 void odroid_input_gamepad_read(odroid_gamepad_state *state)
@@ -312,7 +312,7 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
         /* Read paddle potentiometer if ADC has been initialised and
            GPIO gamepad is NOT active (GPIO pad reads paddle itself) */
 #ifndef CONFIG_HDMI_OUTPUT
-        if (!s_gpio_pad_detected && s_paddle_adc_handle) {
+        if (s_paddle_adc_handle) {
             int raw = 0;
             if (adc_oneshot_read(s_paddle_adc_handle, PADDLE_ADC_CHANNEL, &raw) == ESP_OK) {
                 odroid_paddle_adc_raw = raw;
@@ -321,33 +321,53 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
 #endif
     }
 
-#ifndef CONFIG_HDMI_OUTPUT
-    /* Custom GPIO gamepad — OR its buttons into the state */
-    gpio_pad_read(state);
-
-    /* Touch-panel virtual shoulder buttons — sampled at 2 Hz to avoid CPU overhead.
-     * Disabled when touch keyboard is active (odroid_input_touch_buttons_disable). */
-    if (!odroid_input_touch_buttons_disable) {
-        int64_t now = esp_timer_get_time();
-        if (now - s_touch_last_us >= TOUCH_POLL_INTERVAL_US) {
-            s_touch_last_us = now;
-            uint16_t tx = 0, ty = 0;
-            int menu = 0, vol = 0;
-            if (gt911_touch_get_xy(&tx, &ty)) {
-                if (ty < TOUCH_MENU_Y_MAX)
-                    menu = 1;
-                else if (ty > TOUCH_VOL_Y_MIN)
-                    vol = 1;
-            }
-            s_touch_menu   = menu;
-            s_touch_volume = vol;
-        }
-        state->values[ODROID_INPUT_MENU]   |= s_touch_menu;
-        state->values[ODROID_INPUT_VOLUME] |= s_touch_volume;
-    } else {
-        s_touch_menu = 0;
-        s_touch_volume = 0;
+    /* USB keyboard controls supplement (and can be used without) a gamepad. */
+    uint32_t k = gp.keyboard_keys;
+    if (k != s_last_logged_keyboard_mask) {
+        s_last_logged_keyboard_mask = k;
+        ESP_LOGI(TAG, "Input handoff: connected=%d keyboard=0x%08lx buttons=0x%08lx dpad=0x%02x",
+                 gp.connected, (unsigned long)k, (unsigned long)gp.buttons, gp.dpad);
     }
+	if (gp.buttons != s_last_logged_gp_buttons || gp.dpad != s_last_logged_gp_dpad) {
+		s_last_logged_gp_buttons = gp.buttons;
+		s_last_logged_gp_dpad = gp.dpad;
+		ESP_LOGI(TAG, "Gamepad decoded: connected=%d buttons=0x%08lx dpad=0x%02x axes=(%d,%d,%d,%d)",
+		         gp.connected, (unsigned long)gp.buttons, gp.dpad,
+		         gp.axis_lx, gp.axis_ly, gp.axis_rx, gp.axis_ry);
+	}
+    if (k & GAMEPAD_KEY_UP)          state->values[ODROID_INPUT_UP] = 1;
+    if (k & GAMEPAD_KEY_DOWN)        state->values[ODROID_INPUT_DOWN] = 1;
+    if (k & GAMEPAD_KEY_LEFT)        state->values[ODROID_INPUT_LEFT] = 1;
+    if (k & GAMEPAD_KEY_RIGHT)       state->values[ODROID_INPUT_RIGHT] = 1;
+    if (k & GAMEPAD_KEY_A)           state->values[ODROID_INPUT_A] = 1;
+    if (k & GAMEPAD_KEY_B)           state->values[ODROID_INPUT_B] = 1;
+    if (k & GAMEPAD_KEY_X)           state->values[ODROID_INPUT_X] = 1;
+    if (k & GAMEPAD_KEY_Y)           state->values[ODROID_INPUT_Y] = 1;
+    if (k & GAMEPAD_KEY_L)           state->values[ODROID_INPUT_L] = 1;
+    if (k & GAMEPAD_KEY_R)           state->values[ODROID_INPUT_R] = 1;
+    if (k & GAMEPAD_KEY_SELECT)      state->values[ODROID_INPUT_SELECT] = 1;
+    if (k & GAMEPAD_KEY_START)       state->values[ODROID_INPUT_START] = 1;
+    if (k & GAMEPAD_KEY_MENU)        state->values[ODROID_INPUT_MENU] = 1;
+    if (k & GAMEPAD_KEY_VOLUME_DOWN) state->values[ODROID_INPUT_VOLUME] = 1;
+    if (k & GAMEPAD_KEY_VOLUME_UP)   state->values[ODROID_INPUT_VOLUME] = 1;
+
+#ifndef CONFIG_HDMI_OUTPUT
+    /* Elecrow AIO ladder/touch controls — OR into USB input. */
+    elecrow_esp32_p4_aio_read(state->values, ODROID_INPUT_MAX);
+
+    /* GT911 controls: launcher uses only the corner menu/volume zones;
+     * emulator apps additionally get the visible D-pad and face buttons. */
+    touch_poll();
+    state->values[ODROID_INPUT_UP]     |= (s_touch_game_mask & TOUCH_GAME_UP) != 0;
+    state->values[ODROID_INPUT_DOWN]   |= (s_touch_game_mask & TOUCH_GAME_DOWN) != 0;
+    state->values[ODROID_INPUT_LEFT]   |= (s_touch_game_mask & TOUCH_GAME_LEFT) != 0;
+    state->values[ODROID_INPUT_RIGHT]  |= (s_touch_game_mask & TOUCH_GAME_RIGHT) != 0;
+    state->values[ODROID_INPUT_SELECT] |= (s_touch_game_mask & TOUCH_GAME_SELECT) != 0;
+    state->values[ODROID_INPUT_START]  |= (s_touch_game_mask & TOUCH_GAME_START) != 0;
+    state->values[ODROID_INPUT_A]      |= (s_touch_game_mask & TOUCH_GAME_A) != 0;
+    state->values[ODROID_INPUT_B]      |= (s_touch_game_mask & TOUCH_GAME_B) != 0;
+    state->values[ODROID_INPUT_MENU]   |= (s_touch_game_mask & TOUCH_GAME_MENU) != 0;
+    state->values[ODROID_INPUT_VOLUME] |= (s_touch_game_mask & TOUCH_GAME_VOLUME) != 0;
 #endif /* !CONFIG_HDMI_OUTPUT */
 
 #ifdef CONFIG_HDMI_OUTPUT
@@ -369,6 +389,15 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
         state->values[ODROID_INPUT_MENU]   |= state->values[ODROID_INPUT_X];
         state->values[ODROID_INPUT_VOLUME] |= state->values[ODROID_INPUT_Y];
     }
+
+    uint32_t input_mask = 0;
+    for (int i = 0; i < ODROID_INPUT_MAX; ++i) {
+        if (state->values[i]) input_mask |= 1U << i;
+    }
+    if (input_mask != s_last_logged_input_mask) {
+        s_last_logged_input_mask = input_mask;
+        ESP_LOGI(TAG, "Effective input mask: 0x%04lx", (unsigned long)input_mask);
+    }
 }
 
 odroid_gamepad_state odroid_input_read_raw(void)
@@ -385,10 +414,8 @@ void odroid_paddle_adc_init(void)
 #else
     if (s_paddle_adc_handle) return;  /* already initialised */
 
-    /* Reuse existing ADC2 handle if GPIO gamepad or battery already created it */
-    if (s_gpio_pad_adc) {
-        s_paddle_adc_handle = s_gpio_pad_adc;
-    } else if (s_battery_adc_handle) {
+    /* Paddle is on ADC2; the Elecrow controller owns a separate ADC1 unit. */
+    if (s_battery_adc_handle) {
         s_paddle_adc_handle = s_battery_adc_handle;
     } else {
         adc_oneshot_unit_init_cfg_t unit_cfg = {
@@ -415,9 +442,7 @@ void odroid_input_battery_level_init(void)
     if (s_battery_adc_handle) return;  /* already initialised */
 
     /* Reuse existing ADC2 handle if GPIO pad or paddle already created it */
-    if (s_gpio_pad_adc) {
-        s_battery_adc_handle = s_gpio_pad_adc;
-    } else if (s_paddle_adc_handle) {
+    if (s_paddle_adc_handle) {
         s_battery_adc_handle = s_paddle_adc_handle;
     } else {
         adc_oneshot_unit_init_cfg_t unit_cfg = {
@@ -498,7 +523,7 @@ bool odroid_input_gpio_pad_detected(void)
 #ifdef CONFIG_HDMI_OUTPUT
     return false;
 #else
-    return s_gpio_pad_detected;
+    return true;
 #endif
 }
 

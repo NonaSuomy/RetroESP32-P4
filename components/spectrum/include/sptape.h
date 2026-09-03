@@ -22,6 +22,7 @@
 #define SPTAPE_H
 
 extern void play_tape(void);
+extern void start_play_file_type(char *name, int seg, int type);
 extern void rec_tape(void);
 
 extern void stop_play(void);

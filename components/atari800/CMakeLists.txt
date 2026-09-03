@@ -56,6 +56,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=maybe-uninitialized
     -Wno-error=unused-variable
     -Wno-error=unused-but-set-variable
+    -Wno-error=missing-field-initializers
+    -Wno-error=aggressive-loop-optimizations
+    -Wno-error=register
     -Wno-error=write-strings
     -Wno-error=narrowing
     -Wno-error=sign-compare
@@ -65,7 +68,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=char-subscripts
     -Wno-error=address
     -Wno-error=type-limits
-    -Wno-error=pointer-sign
     -Wno-error=int-to-pointer-cast
     -Wno-format
     -Wno-maybe-uninitialized
@@ -80,7 +82,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-char-subscripts
     -Wno-address
     -Wno-type-limits
-    -Wno-pointer-sign
     -Wno-int-to-pointer-cast
     -Wno-array-bounds
     -Wno-error=array-bounds

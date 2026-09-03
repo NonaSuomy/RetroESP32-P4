@@ -53,6 +53,12 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=incompatible-pointer-types
     -Wno-error=char-subscripts
     -Wno-error=array-bounds
+    -Wno-error=type-limits
+    -Wno-error=empty-body
+    -Wno-error=pointer-to-int-cast
+    -Wno-error=implicit-fallthrough
+    -Wno-error=discarded-qualifiers
+    -Wno-error=unterminated-string-initialization
 )
 
 # Disable minizip (we load uncompressed ROMs from SD card)

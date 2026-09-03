@@ -34,6 +34,7 @@ $CFLAGS = @(
     "-DPLATFORM_SUPPORTS_SDL=1",
     "-DPLATFORM_ESP32=1",
     "-DSTUB_NETWORKING=1",
+    "-std=gnu17",
     "-Os",
     "-fcommon",
     "-ffunction-sections",

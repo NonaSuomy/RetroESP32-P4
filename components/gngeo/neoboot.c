@@ -14,6 +14,9 @@
 
 //#include "driver.h"
 //#include "neogeo.h"
+#ifdef BIT
+#undef BIT
+#endif
 #include "mame_layer.h"
 
 
@@ -1125,4 +1128,3 @@ void matrimbl_decrypt( running_machine *machine )
 	/* decrypt gfx */
 	cthd2003_c( machine, 0 );
 }
-

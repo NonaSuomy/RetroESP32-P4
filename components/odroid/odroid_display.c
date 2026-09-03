@@ -1,10 +1,9 @@
 /*
  * Odroid Display Compatibility Layer — ESP32-P4 Implementation
  *
- * Manages an 800×480 RGB565 framebuffer in PSRAM (native resolution).
- * On display_flush(), uses PPA hardware to:
- *   1. Rotate 270° CCW  (800×480 → 480×800)
- *   2. Draw on the 480×800 MIPI DSI LCD (1:1 pixel mapping, no scaling)
+ * Manages an 800×480 RGB565 framebuffer in PSRAM (native landscape
+ * resolution). On display_flush(), PPA rotates it 180° and centers it on
+ * the 1024×600 MIPI DSI LCD.
  */
 
 #include "odroid_display.h"
@@ -36,7 +35,7 @@ static const char *TAG = "odroid_display";
 static hdmi_display_t s_hdmi_disp;
 static bool s_hdmi_initialized = false;
 #else
-/* LCD: 800×480 landscape (rotated 270° to 480×800 portrait) */
+/* LCD: 800×480 landscape, centered on the 1024×600 panel */
 #define FB_W  800
 #define FB_H  480
 #endif
@@ -96,9 +95,9 @@ static void backlight_init(void)
 #define PPA_BUF_ALIGN  64
 /* s_ppa_out_buf not needed for HDMI — we write directly to s_hdmi_disp.fb */
 #else
-/* LCD: Max PPA output: 480×800 (full LCD). Actual size depends on scale factors. */
-#define PPA_OUT_MAX_W  480
-#define PPA_OUT_MAX_H  800
+/* LCD: Max PPA output: full 1024×600 panel. */
+#define PPA_OUT_MAX_W  1024
+#define PPA_OUT_MAX_H  600
 #define PPA_OUT_MAX_SIZE (PPA_OUT_MAX_W * PPA_OUT_MAX_H * sizeof(uint16_t))  /* 768000 */
 #define PPA_BUF_ALIGN 64
 #define PPA_OUT_ALIGNED ((PPA_OUT_MAX_SIZE + PPA_BUF_ALIGN - 1) & ~(PPA_BUF_ALIGN - 1))
@@ -119,9 +118,357 @@ static uint16_t *s_emu_scaled = NULL;
 static bool s_emu_borders_cleared_a = false;
 #endif
 
-/* Configurable scale factors (1×1 = native resolution → 480×800) */
+/* Configurable scale factors (1×1 = native resolution → landscape LCD) */
 static float s_scale_x = 1.0f;
 static float s_scale_y = 1.0f;
+
+/* Physical touch/display geometry. The launcher is rendered into an
+ * 800×480 landscape viewport centered in the 1024×600 panel, then rotated
+ * 180° by PPA. Emulator output has its own layout, updated before each flush. */
+#ifndef CONFIG_HDMI_OUTPUT
+static volatile uint16_t s_touch_game_x = 192;
+static volatile uint16_t s_touch_game_y = 60;
+static volatile uint16_t s_touch_game_w = 640;
+static volatile uint16_t s_touch_game_h = 480;
+#endif
+static volatile bool s_touch_controls_enabled = false;
+#ifndef CONFIG_HDMI_OUTPUT
+static bool s_touch_side_controls_drawn = false;
+static bool s_touch_side_controls_visible = false;
+#endif
+
+#define TOUCH_UI_W 800
+#define TOUCH_UI_H 480
+#define TOUCH_LCD_W 1024
+#define TOUCH_LCD_H 600
+#define TOUCH_UI_X0 ((TOUCH_LCD_W - TOUCH_UI_W) / 2)
+#define TOUCH_UI_Y0 ((TOUCH_LCD_H - TOUCH_UI_H) / 2)
+
+bool odroid_display_touch_to_ui(uint16_t touch_x, uint16_t touch_y,
+                                int *ui_x, int *ui_y)
+{
+#ifdef CONFIG_HDMI_OUTPUT
+    (void)touch_x; (void)touch_y; (void)ui_x; (void)ui_y;
+    return false;
+#else
+    if (!ui_x || !ui_y || touch_x < TOUCH_UI_X0 || touch_y < TOUCH_UI_Y0 ||
+        touch_x >= TOUCH_UI_X0 + TOUCH_UI_W ||
+        touch_y >= TOUCH_UI_Y0 + TOUCH_UI_H) {
+        return false;
+    }
+
+    /* The framebuffer is sent through a 180° PPA rotation. */
+    *ui_x = TOUCH_UI_W - 1 - (int)(touch_x - TOUCH_UI_X0);
+    *ui_y = TOUCH_UI_H - 1 - (int)(touch_y - TOUCH_UI_Y0);
+    return true;
+#endif
+}
+
+void odroid_display_set_touch_game_layout(uint16_t x, uint16_t y,
+                                          uint16_t w, uint16_t h)
+{
+#ifndef CONFIG_HDMI_OUTPUT
+    if (w == 0 || h == 0) return;
+    if (x != s_touch_game_x || y != s_touch_game_y ||
+        w != s_touch_game_w || h != s_touch_game_h) {
+        s_touch_side_controls_drawn = false;
+    }
+    s_touch_game_x = x;
+    s_touch_game_y = y;
+    s_touch_game_w = w;
+    s_touch_game_h = h;
+#else
+    (void)x; (void)y; (void)w; (void)h;
+#endif
+}
+
+void odroid_display_get_touch_game_layout(uint16_t *x, uint16_t *y,
+                                          uint16_t *w, uint16_t *h)
+{
+#ifdef CONFIG_HDMI_OUTPUT
+    if (x) *x = 0;
+    if (y) *y = 0;
+    if (w) *w = 0;
+    if (h) *h = 0;
+#else
+    if (x) *x = s_touch_game_x;
+    if (y) *y = s_touch_game_y;
+    if (w) *w = s_touch_game_w;
+    if (h) *h = s_touch_game_h;
+#endif
+}
+
+bool odroid_display_touch_to_game(uint16_t touch_x, uint16_t touch_y,
+                                  int *game_x, int *game_y)
+{
+#ifdef CONFIG_HDMI_OUTPUT
+    (void)touch_x; (void)touch_y; (void)game_x; (void)game_y;
+    return false;
+#else
+    if (!game_x || !game_y) return false;
+    uint16_t x0 = s_touch_game_x, y0 = s_touch_game_y;
+    uint16_t w = s_touch_game_w, h = s_touch_game_h;
+    if (w == 0 || h == 0 || touch_x < x0 || touch_y < y0 ||
+        touch_x >= x0 + w || touch_y >= y0 + h) return false;
+
+    /* The LCD receives the emulator framebuffer after a 180° PPA rotation.
+     * Convert the physical point back into the source framebuffer space so
+     * an app's touch UI follows the pixels the user is actually touching. */
+    int physical_x = ((int)(touch_x - x0) * TOUCH_UI_W) / w;
+    int physical_y = ((int)(touch_y - y0) * TOUCH_UI_H) / h;
+    if (physical_x >= TOUCH_UI_W) physical_x = TOUCH_UI_W - 1;
+    if (physical_y >= TOUCH_UI_H) physical_y = TOUCH_UI_H - 1;
+    *game_x = TOUCH_UI_W - 1 - physical_x;
+    *game_y = TOUCH_UI_H - 1 - physical_y;
+    return true;
+#endif
+}
+
+void odroid_display_touch_controls_set_enabled(bool enabled)
+{
+    s_touch_controls_enabled = enabled;
+#ifndef CONFIG_HDMI_OUTPUT
+    s_touch_side_controls_drawn = false;
+#endif
+    ESP_LOGI(TAG, "Landscape touch controls %s", enabled ? "enabled" : "disabled");
+}
+
+#ifndef CONFIG_HDMI_OUTPUT
+static uint16_t touch_blend(uint16_t dst, uint16_t src)
+{
+    uint16_t r = (((dst >> 11) & 0x1F) + ((src >> 11) & 0x1F)) >> 1;
+    uint16_t g = (((dst >> 5)  & 0x3F) + ((src >> 5)  & 0x3F)) >> 1;
+    uint16_t b = ((dst & 0x1F) + (src & 0x1F)) >> 1;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}
+
+static void touch_fill_rect(uint16_t *buf, int stride, int width, int height,
+                            int x, int y, int w, int h, uint16_t color)
+{
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w > width ? width : x + w;
+    int y1 = y + h > height ? height : y + h;
+    for (int yy = y0; yy < y1; yy++) {
+        for (int xx = x0; xx < x1; xx++) {
+            buf[yy * stride + xx] = touch_blend(buf[yy * stride + xx], color);
+        }
+    }
+}
+
+static void touch_rect_border(uint16_t *buf, int stride, int width, int height,
+                              int x, int y, int w, int h, uint16_t color)
+{
+    for (int xx = x; xx < x + w; xx++) {
+        if (xx >= 0 && xx < width) {
+            if (y >= 0 && y < height) buf[y * stride + xx] = color;
+            if (y + h - 1 >= 0 && y + h - 1 < height)
+                buf[(y + h - 1) * stride + xx] = color;
+        }
+    }
+    for (int yy = y; yy < y + h; yy++) {
+        if (yy >= 0 && yy < height) {
+            if (x >= 0 && x < width) buf[yy * stride + x] = color;
+            if (x + w - 1 >= 0 && x + w - 1 < width)
+                buf[yy * stride + x + w - 1] = color;
+        }
+    }
+}
+
+static void touch_circle(uint16_t *buf, int stride, int width, int height,
+                         int cx, int cy, int radius, uint16_t color)
+{
+    int r2 = radius * radius;
+    int inner = radius > 3 ? (radius - 3) * (radius - 3) : 0;
+    for (int y = cy - radius; y <= cy + radius; y++) {
+        if (y < 0 || y >= height) continue;
+        for (int x = cx - radius; x <= cx + radius; x++) {
+            if (x < 0 || x >= width) continue;
+            int dx = x - cx, dy = y - cy;
+            int d2 = dx * dx + dy * dy;
+            if (d2 <= r2) {
+                if (d2 >= inner) buf[y * stride + x] = color;
+                else buf[y * stride + x] = touch_blend(buf[y * stride + x], color);
+            }
+        }
+    }
+}
+
+/* Small 3×5 glyphs are enough to label the virtual controls without pulling
+ * a full font into every emulator image. */
+static void touch_glyph(uint16_t *buf, int stride, int width, int height,
+                        int x, int y, char c, uint16_t color)
+{
+    static const uint8_t glyph_a[5] = {0x2, 0x5, 0x7, 0x5, 0x5};
+    static const uint8_t glyph_b[5] = {0x6, 0x5, 0x6, 0x5, 0x6};
+    static const uint8_t glyph_s[5] = {0x7, 0x4, 0x7, 0x1, 0x7};
+    static const uint8_t glyph_e[5] = {0x7, 0x4, 0x6, 0x4, 0x7};
+    static const uint8_t glyph_l[5] = {0x4, 0x4, 0x4, 0x4, 0x7};
+    static const uint8_t glyph_t[5] = {0x7, 0x2, 0x2, 0x2, 0x2};
+    static const uint8_t glyph_r[5] = {0x6, 0x5, 0x6, 0x5, 0x5};
+    static const uint8_t glyph_m[5] = {0x5, 0x7, 0x7, 0x5, 0x5};
+    static const uint8_t glyph_n[5] = {0x5, 0x7, 0x7, 0x7, 0x5};
+    static const uint8_t glyph_o[5] = {0x7, 0x5, 0x5, 0x5, 0x7};
+    static const uint8_t glyph_u[5] = {0x5, 0x5, 0x5, 0x5, 0x7};
+    static const uint8_t glyph_v[5] = {0x5, 0x5, 0x5, 0x5, 0x2};
+    const uint8_t *g = NULL;
+    switch (c) {
+    case 'A': g = glyph_a; break; case 'B': g = glyph_b; break;
+    case 'S': g = glyph_s; break; case 'E': g = glyph_e; break;
+    case 'L': g = glyph_l; break; case 'T': g = glyph_t; break;
+    case 'R': g = glyph_r; break; case 'M': g = glyph_m; break;
+    case 'N': g = glyph_n; break; case 'O': g = glyph_o; break;
+    case 'U': g = glyph_u; break; case 'V': g = glyph_v; break;
+    default: return;
+    }
+    for (int row = 0; row < 5; row++) {
+        for (int col = 0; col < 3; col++) {
+            if ((g[row] & (1 << (2 - col))) && x + col >= 0 && x + col < width &&
+                y + row >= 0 && y + row < height)
+                buf[(y + row) * stride + x + col] = color;
+        }
+    }
+}
+
+static void touch_label(uint16_t *buf, int stride, int width, int height,
+                        int cx, int cy, const char *text, uint16_t color)
+{
+    int n = 0;
+    while (text[n]) n++;
+    int x = cx - (n * 4 - 1) / 2;
+    for (int i = 0; i < n; i++) touch_glyph(buf, stride, width, height,
+                                               x + i * 4, cy - 2, text[i], color);
+}
+
+/* Draw controls into the physical side margins, not into the game image.
+ * The game image is rotated by PPA. These panels are copied directly into the
+ * LCD framebuffer, so their coordinates and glyphs are already final physical
+ * landscape coordinates: apply no second rotation to the overlay. */
+#define TOUCH_PANEL_MAX_W 192
+#define TOUCH_PANEL_MAX_H 600
+#define TOUCH_PANEL_BYTES (TOUCH_PANEL_MAX_W * TOUCH_PANEL_MAX_H * sizeof(uint16_t))
+static uint16_t *s_touch_panel_buf = NULL;
+
+static void draw_touch_side_panel(uint16_t *buf, int width, int height, bool right)
+{
+    memset(buf, 0, (size_t)width * height * sizeof(uint16_t));
+
+    int box_w = width > 112 ? 100 : width - 12;
+    if (box_w < 48) box_w = width;
+    int box_x = (width - box_w) / 2;
+    int box_h = 36;
+
+    if (right) {
+        /* The game image is rotated 180 degrees for the panel. Keep the
+         * virtual controller in that same physical orientation: START is
+         * at the top, VOLUME at the bottom, and A/B follow the rotation. */
+        int top_y = 10;
+        int bottom_y = height - box_h - 10;
+        touch_fill_rect(buf, width, width, height, box_x, top_y, box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, top_y, box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, top_y + box_h / 2, "START", 0xFFFF);
+
+        int radius = width > 160 ? 34 : 24;
+        int ax = width - width * 34 / 100, ay = height - 270;
+        int bx = width - width * 68 / 100, by = height - 380;
+        touch_circle(buf, width, width, height, ax, ay, radius, 0xF800);
+        touch_circle(buf, width, width, height, bx, by, radius, 0x001F);
+        touch_label(buf, width, width, height, ax, ay, "A", 0xFFFF);
+        touch_label(buf, width, width, height, bx, by, "B", 0xFFFF);
+
+        touch_fill_rect(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, bottom_y + box_h / 2, "VOL", 0xFFFF);
+    } else {
+        int top_y = 10;
+        int bottom_y = height - box_h - 10;
+        touch_fill_rect(buf, width, width, height, box_x, top_y, box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, top_y, box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, top_y + box_h / 2, "SEL", 0xFFFF);
+
+        int dpad_cx = width / 2, dpad_cy = height - 315;
+        int arm = width > 160 ? 54 : 38;
+        int arm_w = width > 160 ? 36 : 28;
+        touch_fill_rect(buf, width, width, height, dpad_cx - arm_w / 2, dpad_cy - arm,
+                        arm_w, arm * 2, 0x39E7);
+        touch_fill_rect(buf, width, width, height, dpad_cx - arm, dpad_cy - arm_w / 2,
+                        arm * 2, arm_w, 0x39E7);
+        touch_rect_border(buf, width, width, height, dpad_cx - arm, dpad_cy - arm,
+                          arm * 2, arm * 2, 0xBDF7);
+
+        touch_fill_rect(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0x39E7);
+        touch_rect_border(buf, width, width, height, box_x, bottom_y, box_w, box_h, 0xBDF7);
+        touch_label(buf, width, width, height, width / 2, bottom_y + box_h / 2, "MENU", 0xFFFF);
+    }
+}
+
+static void draw_touch_controls_physical(uint16_t game_x, uint16_t game_y,
+                                         uint16_t game_w, uint16_t game_h)
+{
+    uint16_t lcd_w = st7701_lcd_width();
+    uint16_t lcd_h = st7701_lcd_height();
+    int left_w = game_x;
+    int right_x = (int)game_x + game_w;
+    int right_w = (int)lcd_w - right_x;
+    if (left_w <= 0 && right_w <= 0) return;
+
+    /* Do not leave an old overlay behind when an emulator returns to the
+     * launcher or changes output size. The game bitmap does not cover these
+     * margins, so they must be explicitly cleared. */
+    if (!s_touch_controls_enabled) {
+        if (s_touch_side_controls_visible && s_touch_panel_buf) {
+            memset(s_touch_panel_buf, 0,
+                   (size_t)TOUCH_PANEL_MAX_W * lcd_h * sizeof(uint16_t));
+            if (left_w > 0) {
+                int clear_w = left_w > TOUCH_PANEL_MAX_W ? TOUCH_PANEL_MAX_W : left_w;
+                st7701_lcd_draw_to_fb(0, 0, clear_w, lcd_h, s_touch_panel_buf);
+            }
+            if (right_w > 0) {
+                int clear_w = right_w > TOUCH_PANEL_MAX_W ? TOUCH_PANEL_MAX_W : right_w;
+                st7701_lcd_draw_to_fb(right_x, 0, clear_w, lcd_h, s_touch_panel_buf);
+            }
+            s_touch_side_controls_visible = false;
+        }
+        return;
+    }
+
+    if (s_touch_side_controls_drawn) return;
+
+    if (!s_touch_panel_buf) {
+        s_touch_panel_buf = heap_caps_aligned_calloc(
+            64, 1, TOUCH_PANEL_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
+        if (!s_touch_panel_buf) {
+            ESP_LOGE(TAG, "Touch side-panel buffer allocation failed");
+            return;
+        }
+    }
+
+    if (left_w > 0) {
+        if (left_w > TOUCH_PANEL_MAX_W) left_w = TOUCH_PANEL_MAX_W;
+        draw_touch_side_panel(s_touch_panel_buf, left_w, lcd_h, false);
+        /* draw_rgb_bitmap may queue an async DMA2D transfer. The buffer is
+         * reused for the right panel immediately, so copy through the DPI
+         * framebuffer to make both panels deterministic. */
+        st7701_lcd_draw_to_fb(0, 0, left_w, lcd_h, s_touch_panel_buf);
+    }
+    if (right_w > 0) {
+        if (right_w > TOUCH_PANEL_MAX_W) right_w = TOUCH_PANEL_MAX_W;
+        draw_touch_side_panel(s_touch_panel_buf, right_w, lcd_h, true);
+        st7701_lcd_draw_to_fb(right_x, 0, right_w, lcd_h, s_touch_panel_buf);
+    }
+
+    s_touch_side_controls_drawn = true;
+    s_touch_side_controls_visible = true;
+    ESP_LOGI(TAG, "Touch controls drawn in LCD margins: game=%ux%u+%u,%u left=%d right=%d",
+             game_w, game_h, game_x, game_y, left_w, right_w);
+}
+#else
+static void draw_touch_controls_physical(uint16_t game_x, uint16_t game_y,
+                                         uint16_t game_w, uint16_t game_h)
+{
+    (void)game_x; (void)game_y; (void)game_w; (void)game_h;
+}
+#endif
 
 /* ─── Timing instrumentation ──────────────────────────────────── */
 static int64_t s_timing_ppa_acc = 0;
@@ -153,7 +500,7 @@ void display_flush(void)
     esp_cache_msync(s_hdmi_disp.fb, s_hdmi_disp.fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     int64_t t2 = esp_timer_get_time();
 #else
-    /* LCD: PPA rotate 270° + scale → push to ST7701 */
+    /* LCD: landscape scale → push to ST7701 */
     /* Lazy-allocate the persistent PPA output buffer */
     if (!s_ppa_out_buf) {
         s_ppa_out_buf = heap_caps_aligned_calloc(
@@ -167,12 +514,12 @@ void display_flush(void)
         ESP_LOGI(TAG, "PPA output buffer allocated: %d bytes", PPA_OUT_ALIGNED);
     }
 
-    /* Single PPA SRM: rotate 270° + scale in one operation */
+    /* Single PPA SRM: landscape scale in one operation */
     uint32_t out_w = 0, out_h = 0;
     int64_t t0 = esp_timer_get_time();
     esp_err_t ret = ppa_rotate_scale_rgb565_to(
         s_framebuffer, FB_W, FB_H,
-        270, s_scale_x, s_scale_y,
+        180, s_scale_x, s_scale_y,
         s_ppa_out_buf, s_ppa_out_size,
         &out_w, &out_h, false);
     int64_t t1 = esp_timer_get_time();
@@ -182,11 +529,15 @@ void display_flush(void)
         return;
     }
 
-    /* Display centered on 480×800 at (0, 80) */
-    uint16_t lcd_h = st7701_lcd_height();  /* 800 */
+    /* Center the 800×480 virtual framebuffer on the 1024×600 panel. */
+    uint16_t lcd_w = st7701_lcd_width();
+    uint16_t lcd_h = st7701_lcd_height();
+    uint16_t x_off = (lcd_w > out_w) ? (lcd_w - out_w) / 2 : 0;
     uint16_t y_off = (lcd_h > out_h) ? (lcd_h - out_h) / 2 : 0;
 
-    st7701_lcd_draw_rgb_bitmap(0, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    odroid_display_set_touch_game_layout(x_off, y_off, out_w, out_h);
+    st7701_lcd_draw_rgb_bitmap(x_off, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    draw_touch_controls_physical(x_off, y_off, out_w, out_h);
     int64_t t2 = esp_timer_get_time();
 #endif /* CONFIG_HDMI_OUTPUT */
 
@@ -219,7 +570,7 @@ void display_set_scale(float sx, float sy)
     ESP_LOGI(TAG, "PPA scale set to %.2fx%.2f", sx, sy);
 }
 
-/* ─── Pipeline A helper: 320×240 → PPA 2× + 270° → 480×640 LCD ─
+/* ─── Pipeline A helper: 320×240 → PPA 2× + 180° → landscape LCD ─
  *
  * Called from Pipeline A functions that already hold the display lock.
  * Does the same thing as ili9341_write_frame_rgb565_ex() but without
@@ -246,7 +597,7 @@ static void display_emu_flush_320x240(const uint16_t *buf, bool byte_swap)
     int64_t t2 = esp_timer_get_time();
     (void)byte_swap;
 #else
-    /* LCD: PPA 2× scale + 270° rotate → 480×640 */
+    /* LCD: PPA 2× scale → 640×480 landscape */
     /* Lazy-allocate the persistent PPA output buffer */
     if (!s_ppa_out_buf) {
         s_ppa_out_buf = heap_caps_aligned_calloc(
@@ -259,21 +610,18 @@ static void display_emu_flush_320x240(const uint16_t *buf, bool byte_swap)
         s_ppa_out_size = PPA_OUT_ALIGNED;
     }
 
-    /* Clear LCD border areas once (top/bottom 80 rows) */
+    /* Clear the unused panel area once before drawing the centered frame. */
     if (!s_emu_borders_cleared_a) {
-        size_t border_size = 480 * 80 * sizeof(uint16_t);
-        memset(s_ppa_out_buf, 0, border_size);
-        st7701_lcd_draw_rgb_bitmap(0, 0, 480, 80, (const uint16_t *)s_ppa_out_buf);
-        st7701_lcd_draw_rgb_bitmap(0, 720, 480, 80, (const uint16_t *)s_ppa_out_buf);
+        st7701_lcd_fill_screen(0x0000);
         s_emu_borders_cleared_a = true;
     }
 
-    /* PPA: 320×240 → scale 2× + rotate 270° → 480×640 */
+    /* PPA: 320×240 → scale 2× → 640×480 */
     uint32_t out_w = 0, out_h = 0;
     int64_t t0 = esp_timer_get_time();
     esp_err_t ret = ppa_rotate_scale_rgb565_to(
         buf, EMU_W, EMU_H,
-        270, 2.0f, 2.0f,
+        180, 2.0f, 2.0f,
         s_ppa_out_buf, s_ppa_out_size,
         &out_w, &out_h, byte_swap);
     int64_t t1 = esp_timer_get_time();
@@ -283,10 +631,14 @@ static void display_emu_flush_320x240(const uint16_t *buf, bool byte_swap)
         return;
     }
 
-    /* Center on 480×800 LCD: y_off = (800 - 640) / 2 = 80 */
+    /* Center the 640×480 frame on the 1024×600 LCD. */
+    uint16_t lcd_w = st7701_lcd_width();
     uint16_t lcd_h = st7701_lcd_height();
+    uint16_t x_off = (lcd_w > out_w) ? (lcd_w - out_w) / 2 : 0;
     uint16_t y_off = (lcd_h > out_h) ? (lcd_h - out_h) / 2 : 0;
-    st7701_lcd_draw_rgb_bitmap(0, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    odroid_display_set_touch_game_layout(x_off, y_off, out_w, out_h);
+    st7701_lcd_draw_rgb_bitmap(x_off, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    draw_touch_controls_physical(x_off, y_off, out_w, out_h);
     int64_t t2 = esp_timer_get_time();
 #endif /* CONFIG_HDMI_OUTPUT */
 
@@ -838,8 +1190,8 @@ void ili9341_write_frame_lynx(const uint16_t *buffer)
 
 /* ─── Generic RGB565 display: 320×240 emulator output ────────── */
 /*
- * Optimized path: PPA hardware does 2× scale + 270° rotation in one
- * operation directly from the 320×240 input → 480×640 output.
+ * Optimized path: PPA hardware does 2× scale + 180° rotation in one
+ * operation directly from the 320×240 input → 640×480 output.
  * This avoids the intermediate 800×480 framebuffer, CPU 2× scaling,
  * border clearing, and the separate PPA rotation of the full 800×480.
  *
@@ -869,7 +1221,7 @@ void ili9341_write_frame_rgb565_ex(const uint16_t *buffer, bool byte_swap_input)
     /* HDMI: PPA scale 320×240 RGB565 → 640×480 RGB888 directly into HDMI FB */
     display_emu_flush_320x240(buffer, byte_swap_input);
 #else
-    /* LCD: PPA 2× scale + 270° rotate → push to ST7701 */
+    /* LCD: PPA 2× scale → push to ST7701 */
     if (!s_ppa_out_buf) {
         s_ppa_out_buf = heap_caps_aligned_calloc(
             PPA_BUF_ALIGN, 1, PPA_OUT_ALIGNED,
@@ -883,10 +1235,7 @@ void ili9341_write_frame_rgb565_ex(const uint16_t *buffer, bool byte_swap_input)
     }
 
     if (!s_emu_borders_cleared) {
-        size_t border_size = 480 * 80 * sizeof(uint16_t);
-        memset(s_ppa_out_buf, 0, border_size);
-        st7701_lcd_draw_rgb_bitmap(0, 0, 480, 80, (const uint16_t *)s_ppa_out_buf);
-        st7701_lcd_draw_rgb_bitmap(0, 720, 480, 80, (const uint16_t *)s_ppa_out_buf);
+        st7701_lcd_fill_screen(0x0000);
         s_emu_borders_cleared = true;
     }
 
@@ -894,7 +1243,7 @@ void ili9341_write_frame_rgb565_ex(const uint16_t *buffer, bool byte_swap_input)
     int64_t t0 = esp_timer_get_time();
     esp_err_t ret = ppa_rotate_scale_rgb565_to(
         buffer, EMU_W, EMU_H,
-        270, 2.0f, 2.0f,
+        180, 2.0f, 2.0f,
         s_ppa_out_buf, s_ppa_out_size,
         &out_w, &out_h, byte_swap_input);
     int64_t t1 = esp_timer_get_time();
@@ -905,9 +1254,13 @@ void ili9341_write_frame_rgb565_ex(const uint16_t *buffer, bool byte_swap_input)
         return;
     }
 
+    uint16_t lcd_w = st7701_lcd_width();
     uint16_t lcd_h = st7701_lcd_height();
+    uint16_t x_off = (lcd_w > out_w) ? (lcd_w - out_w) / 2 : 0;
     uint16_t y_off = (lcd_h > out_h) ? (lcd_h - out_h) / 2 : 0;
-    st7701_lcd_draw_rgb_bitmap(0, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    odroid_display_set_touch_game_layout(x_off, y_off, out_w, out_h);
+    st7701_lcd_draw_rgb_bitmap(x_off, y_off, out_w, out_h, (const uint16_t *)s_ppa_out_buf);
+    draw_touch_controls_physical(x_off, y_off, out_w, out_h);
     int64_t t2 = esp_timer_get_time();
 
     s_timing_ppa_acc += (t1 - t0);
@@ -973,7 +1326,7 @@ void ili9341_write_frame_rgb565_custom(const uint16_t *buffer, uint16_t in_w,
     esp_cache_msync(s_hdmi_disp.fb, s_hdmi_disp.fb_size, ESP_CACHE_MSYNC_FLAG_DIR_C2M);
     (void)scale; (void)byte_swap_input;
 #else
-    /* LCD: PPA scale + rotate 270° → push to ST7701 */
+    /* LCD: PPA scale in landscape → push to ST7701 */
     if (!s_ppa_out_buf) {
         s_ppa_out_buf = heap_caps_aligned_calloc(
             PPA_BUF_ALIGN, 1, PPA_OUT_ALIGNED,
@@ -986,9 +1339,9 @@ void ili9341_write_frame_rgb565_custom(const uint16_t *buffer, uint16_t in_w,
         s_ppa_out_size = PPA_OUT_ALIGNED;
     }
 
-    /* Compute output dimensions after scale + 270° rotation */
-    uint16_t out_w_exp = (uint16_t)(in_h * scale);
-    uint16_t out_h_exp = (uint16_t)(in_w * scale);
+    /* Compute output dimensions after landscape scaling. */
+    uint16_t out_w_exp = (uint16_t)(in_w * scale);
+    uint16_t out_h_exp = (uint16_t)(in_h * scale);
     uint16_t lcd_w = st7701_lcd_width();
     uint16_t lcd_h = st7701_lcd_height();
     uint16_t x_off = (lcd_w > out_w_exp) ? (lcd_w - out_w_exp) / 2 : 0;
@@ -1003,7 +1356,7 @@ void ili9341_write_frame_rgb565_custom(const uint16_t *buffer, uint16_t in_w,
     uint32_t out_w = 0, out_h = 0;
     esp_err_t ret = ppa_rotate_scale_rgb565_to(
         buffer, in_w, in_h,
-        270, scale, scale,
+        180, scale, scale,
         s_ppa_out_buf, s_ppa_out_size,
         &out_w, &out_h, byte_swap_input);
 
@@ -1013,8 +1366,10 @@ void ili9341_write_frame_rgb565_custom(const uint16_t *buffer, uint16_t in_w,
         return;
     }
 
+    odroid_display_set_touch_game_layout(x_off, y_off, out_w, out_h);
     st7701_lcd_draw_rgb_bitmap(x_off, y_off, out_w, out_h,
                                (const uint16_t *)s_ppa_out_buf);
+    draw_touch_controls_physical(x_off, y_off, out_w, out_h);
 #endif /* CONFIG_HDMI_OUTPUT */
     odroid_display_unlock();
 }
@@ -1058,4 +1413,3 @@ void odroid_display_drain_spi(void)
 {
     /* No-op — no SPI on P4 */
 }
-

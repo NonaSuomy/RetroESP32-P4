@@ -83,6 +83,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=format-overflow
     -Wno-error=type-limits
     -Wno-error=template-id-cdtor
+    -Wno-error=delete-incomplete
+    -Wno-error=implicit-fallthrough
+    -Wno-error=uninitialized
     -Wno-template-id-cdtor
     -fno-exceptions
     -fno-rtti

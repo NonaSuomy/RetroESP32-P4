@@ -56,6 +56,14 @@
 #define DEFAULT_SAMPLERATE   32000
 #define  DEFAULT_FRAGSIZE     512
 
+/* The upstream OSD expected this flag from its original platform build.
+ * The ESP32-P4 component has no Kconfig entry, so an undefined symbol
+ * silently disabled the entire audio callback path under #if CONFIG_SOUND_ENA.
+ * Keep sound enabled by default for this port. */
+#ifndef CONFIG_SOUND_ENA
+#define CONFIG_SOUND_ENA 1
+#endif
+
 #define  DEFAULT_WIDTH        256
 #define  DEFAULT_HEIGHT       NES_VISIBLE_HEIGHT
 
@@ -271,7 +279,7 @@ static void videoTask(void *arg) {
 	{
 		xQueuePeek(vidQueue, &bmp, portMAX_DELAY);
 
-        if (bmp == 1) break;
+        if (bmp == (uint8_t *)1) break;
 
         if (previous_scaling_enabled != scaling_enabled)
         {
@@ -848,7 +856,7 @@ static void DoQuit()
     {
         uint8_t *discard;
         while (xQueueReceive(vidQueue, &discard, 0) == pdTRUE) {}
-        uint16_t* param = 1;
+        uint8_t* param = (uint8_t *)1;
         xQueueOverwrite(vidQueue, &param);
         int timeout = 500;
         while (!exitVideoTaskFlag && --timeout > 0) { vTaskDelay(1); }

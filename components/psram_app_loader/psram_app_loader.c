@@ -320,8 +320,7 @@ static int svc_fb_copy(const uint16_t *src, uint16_t *dst,
     if (!s_axi_mcp) {
         async_memcpy_config_t cfg = {
             .backlog = 4,
-            .sram_trans_align = 64,
-            .psram_trans_align = 64,
+            .dma_burst_size = 64,
             .flags = 0,
         };
         esp_err_t err = esp_async_memcpy_install_gdma_axi(&cfg, &s_axi_mcp);
@@ -346,16 +345,18 @@ static int svc_fb_copy(const uint16_t *src, uint16_t *dst,
     return 0;
 }
 
-/* Read the GT911 touch panel, reporting coordinates in landscape
- * native-framebuffer space (x:0..799, y:0..479) to match
- * display_get_framebuffer(). The panel is 480x800 portrait; the launcher
- * uses the same (ty, 479-tx) mapping for its own landscape UI. */
+/* Read the GT911 touch panel, reporting coordinates in the unrotated
+ * 800x480 emulator framebuffer space. The display pipeline rotates emulator
+ * frames 180° before sending them to the physical landscape LCD, so use the
+ * same inverse transform as the launcher and the shared game touch mapper. */
 static int svc_touch_read(int *x, int *y)
 {
     uint16_t tx = 0, ty = 0;
     if (!gt911_touch_get_xy(&tx, &ty)) return 0;
-    if (x) *x = (int)ty;              /* landscape X = portrait Y  (0..799) */
-    if (y) *y = 479 - (int)tx;        /* landscape Y = inverted portrait X (0..479) */
+    int game_x = -1, game_y = -1;
+    if (!odroid_display_touch_to_game(tx, ty, &game_x, &game_y)) return 0;
+    if (x) *x = game_x;
+    if (y) *y = game_y;
     return 1;
 }
 

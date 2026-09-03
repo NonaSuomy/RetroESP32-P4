@@ -30,16 +30,10 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-sequence-point
     -Wno-sizeof-pointer-memaccess
     -Wno-maybe-uninitialized
+    -Wno-error=overloaded-virtual
 )
 
 # Defines matching the original RetroESP32 build
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
-    MY_NO_STATIC
-    MY_KEYS_IN_VIDEO
-    MY_RETRO_LOOP
-    MY_SYSTEM_LOOP=2
-    MY_MEM_MODE_V2
-    MY_AUDIO_MODE=2
-    MY_ALLOC
     GIT_VERSION=""
 )

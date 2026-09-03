@@ -2,7 +2,8 @@
  * Odroid SD Card Compatibility Layer — ESP32-P4 Implementation
  *
  * Mounts the SD card via SDMMC 4-bit mode with on-chip LDO power control.
- * Uses the same GPIO assignments as the ESP32-P4 base project.
+ * The Elecrow AIO routes the TF slot as a 1-bit bus: DO=39, SCK=43,
+ * CMD=44. GPIO40/41 are reserved for the GT911 touch reset/interrupt.
  */
 
 #include "odroid_sdcard.h"
@@ -53,13 +54,13 @@ esp_err_t odroid_sdcard_open(const char* base_path)
         host.pwr_ctrl_handle = pwr_ctrl_handle;
 
         sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-        slot_config.width = 4;
+        slot_config.width = 1;
         slot_config.clk = (gpio_num_t)SD_MMC_CLK;
         slot_config.cmd = (gpio_num_t)SD_MMC_CMD;
         slot_config.d0  = (gpio_num_t)SD_MMC_D0;
-        slot_config.d1  = (gpio_num_t)SD_MMC_D1;
-        slot_config.d2  = (gpio_num_t)SD_MMC_D2;
-        slot_config.d3  = (gpio_num_t)SD_MMC_D3;
+        slot_config.d1  = GPIO_NUM_NC;
+        slot_config.d2  = GPIO_NUM_NC;
+        slot_config.d3  = GPIO_NUM_NC;
         slot_config.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
 
         esp_vfs_fat_sdmmc_mount_config_t mount_config = {

@@ -28,6 +28,7 @@
 #include "spscr.h"
 #include "spsound.h"
 #include "sptape.h"
+#include "tapefile.h"
 #include "sptiming.h"
 #include "spkey.h"
 #include "ay_sound.h"
@@ -518,8 +519,19 @@ void spectrum_run(const char *rom_path)
     /* ─── Spectrum emulator init ─────────────────────────────── */
     sp_init();
 
-    /* Load the snapshot file */
-    load_snapshot_file_type(rom_path, -1);
+    /* Load a snapshot, or start the selected tape image.  The underlying
+     * SPECTEMU tape engine already supports both TAP and TZX formats. */
+    const char *ext = strrchr(rom_path, '.');
+    bool is_tape = ext && (strcasecmp(ext, ".tap") == 0 ||
+                           strcasecmp(ext, ".tzx") == 0);
+    if (is_tape) {
+        int tape_type = (strcasecmp(ext, ".tzx") == 0) ? TAP_TZX : TAP_TAP;
+        printf("ZX: Starting %s tape image: %s\n",
+               tape_type == TAP_TZX ? "TZX" : "TAP", rom_path);
+        start_play_file_type((char *)rom_path, 0, tape_type);
+    } else {
+        load_snapshot_file_type((char *)rom_path, -1);
+    }
 
     /* Check for saved state and resume */
     if (odroid_settings_StartAction_get() == ODROID_START_ACTION_RESTART && zx_save_exists()) {
@@ -657,7 +669,12 @@ void spectrum_run(const char *rom_path)
                     break;
                 case ZX_MENU_RESTART:
                     printf("ZX: Restarting from original ROM\n");
-                    load_snapshot_file_type(zx_rom_path_saved, -1);
+                    if (is_tape) {
+                        int tape_type = (strcasestr(zx_rom_path_saved, ".tzx") != NULL) ? TAP_TZX : TAP_TAP;
+                        start_play_file_type((char *)zx_rom_path_saved, 0, tape_type);
+                    } else {
+                        load_snapshot_file_type((char *)zx_rom_path_saved, -1);
+                    }
                     break;
                 case ZX_MENU_EXIT:
                     /* Exit without auto-saving — start fresh next time */

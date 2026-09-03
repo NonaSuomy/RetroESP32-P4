@@ -700,6 +700,7 @@ void smsplus_run(const char *rom_path)
     printf("smsplus_run: starting SMS/GG emulator, ROM=%s\n", rom_path);
 
     smsplus_quit_flag = false;
+    bool system_initialized = false;
 
     /* Store ROM path for save/load */
     odroid_settings_RomFilePath_set(rom_path);
@@ -739,7 +740,11 @@ void smsplus_run(const char *rom_path)
         goto cleanup;
     }
 
-    load_rom((char *)rom_path);
+    if (!load_rom((char *)rom_path))
+    {
+        printf("smsplus_run: ROM load failed; returning to launcher\n");
+        goto cleanup;
+    }
 
     /* Set up display */
     const bool isGameGear = (sms.console == CONSOLE_GG) || (sms.console == CONSOLE_GGMS);
@@ -767,6 +772,7 @@ void smsplus_run(const char *rom_path)
     option.extra_gg = 0;
 
     system_init2();
+    system_initialized = true;
     system_reset();
 
     /* Check for resume: if StartAction is RESTART, load saved state */
@@ -931,7 +937,7 @@ void smsplus_run(const char *rom_path)
 
     /* ---- Cleanup ---- */
 cleanup:
-    system_shutdown();
+    if (system_initialized) system_shutdown();
 
     if (audioBuffer)
     {

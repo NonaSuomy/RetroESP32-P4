@@ -38,13 +38,18 @@ static esp_codec_dev_handle_t s_codec_handle = NULL;
 /* Current config */
 static audio_config_t s_config;
 static bool s_initialized = false;
+/* The Elecrow board has an NS4168 I2S amplifier, not an ES8311 codec.
+ * GPIO6 drives a P-channel MOSFET, so the amplifier power gate is active-low. */
+static bool s_raw_i2s = false;
+static uint32_t s_pcm_log_count = 0;
 
 /* ─── I2S driver init ─────────────────────────────────────────────── */
 static esp_err_t i2s_driver_init(const audio_config_t *cfg)
 {
-    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG((i2s_port_t)cfg->i2s_num, I2S_ROLE_MASTER);
+    i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(cfg->i2s_num, I2S_ROLE_MASTER);
     chan_cfg.auto_clear = true;
-    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &s_tx_handle, &s_rx_handle), TAG, "i2s_new_channel failed");
+    i2s_chan_handle_t *rx_handle = (cfg->din_io >= 0) ? &s_rx_handle : NULL;
+    ESP_RETURN_ON_ERROR(i2s_new_channel(&chan_cfg, &s_tx_handle, rx_handle), TAG, "i2s_new_channel failed");
 
     i2s_std_config_t std_cfg = {
         .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(cfg->sample_rate),
@@ -65,9 +70,11 @@ static esp_err_t i2s_driver_init(const audio_config_t *cfg)
     std_cfg.clk_cfg.mclk_multiple = (i2s_mclk_multiple_t)MCLK_MULTIPLE;
 
     ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_tx_handle, &std_cfg), TAG, "TX init failed");
-    ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx_handle, &std_cfg), TAG, "RX init failed");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_tx_handle), TAG, "TX enable failed");
-    ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx_handle), TAG, "RX enable failed");
+    if (s_rx_handle) {
+        ESP_RETURN_ON_ERROR(i2s_channel_init_std_mode(s_rx_handle, &std_cfg), TAG, "RX init failed");
+        ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx_handle), TAG, "RX enable failed");
+    }
 
     ESP_LOGI(TAG, "I2S%d initialized: SR=%d, MCLK=%d, BCLK=%d, WS=%d, DOUT=%d, DIN=%d",
              cfg->i2s_num, cfg->sample_rate,
@@ -172,8 +179,8 @@ esp_err_t audio_init(const audio_config_t *config)
         ESP_LOGW(TAG, "Audio already initialized");
         return ESP_OK;
     }
-    if (!config || !config->i2c_handle) {
-        ESP_LOGE(TAG, "Invalid config or missing I2C handle");
+    if (!config || (config->mclk_io >= 0 && !config->i2c_handle)) {
+        ESP_LOGE(TAG, "Invalid config or missing I2C handle for codec mode");
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -182,7 +189,20 @@ esp_err_t audio_init(const audio_config_t *config)
     /* 1. Initialize I2S driver */
     ESP_RETURN_ON_ERROR(i2s_driver_init(config), TAG, "I2S init failed");
 
-    /* 2. Initialize ES8311 codec via I2C */
+    /* 2. The Elecrow NS4168 is a raw I2S amplifier controlled by a GPIO. */
+    s_raw_i2s = (config->mclk_io < 0);
+    if (s_raw_i2s) {
+        if (config->pa_ctrl_io >= 0) {
+            gpio_set_direction(config->pa_ctrl_io, GPIO_MODE_OUTPUT);
+            /* Elecrow's P-MOS audio power switch is enabled low. */
+            gpio_set_level(config->pa_ctrl_io, config->volume > 0 ? 0 : 1);
+        }
+        s_initialized = true;
+        ESP_LOGI(TAG, "Raw I2S amplifier ready (NS4168 PA=%d, vol=%d)", config->pa_ctrl_io, config->volume);
+        return ESP_OK;
+    }
+
+    /* 2. Initialize ES8311 codec via I2C on boards that provide one. */
     ESP_RETURN_ON_ERROR(es8311_codec_init(config), TAG, "ES8311 codec init failed");
 
     s_initialized = true;
@@ -195,7 +215,9 @@ esp_err_t audio_play_tone(uint32_t freq_hz, uint32_t duration_ms, int volume)
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
 
     /* Set volume */
-    esp_codec_dev_set_out_vol(s_codec_handle, volume);
+    if (!s_raw_i2s) {
+        esp_codec_dev_set_out_vol(s_codec_handle, volume);
+    }
 
     /*
      * Generate a 16-bit stereo sine wave.
@@ -267,6 +289,14 @@ esp_err_t audio_set_volume(int volume)
     if (volume < 0) volume = 0;
     if (volume > 100) volume = 100;
 
+    if (s_raw_i2s) {
+        if (s_config.pa_ctrl_io >= 0) {
+            /* Elecrow's P-MOS audio power switch is enabled low. */
+            gpio_set_level(s_config.pa_ctrl_io, volume > 0 ? 0 : 1);
+        }
+        return ESP_OK;
+    }
+
     if (esp_codec_dev_set_out_vol(s_codec_handle, volume) != ESP_CODEC_DEV_OK) {
         ESP_LOGE(TAG, "Failed to set volume to %d", volume);
         return ESP_FAIL;
@@ -323,6 +353,19 @@ esp_err_t audio_play_pcm(const void *data, size_t len, int sample_rate)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
+
+    if (s_pcm_log_count++ < 3) {
+        const int16_t *samples = (const int16_t *)data;
+        int16_t peak = 0;
+        size_t sample_count = len / sizeof(int16_t);
+        for (size_t i = 0; i < sample_count; ++i) {
+            int32_t v = samples[i];
+            if (v < 0) v = -v;
+            if (v > peak) peak = (int16_t)(v > 32767 ? 32767 : v);
+        }
+        ESP_LOGI(TAG, "PCM -> I2S: bytes=%u rate=%d peak=%d",
+                 (unsigned)len, sample_rate, peak);
+    }
 
     size_t bytes_written = 0;
     const uint8_t *ptr = (const uint8_t *)data;

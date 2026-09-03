@@ -53,7 +53,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-implicit-function-declaration
     -Wno-incompatible-pointer-types
     -Wno-int-conversion
-    -Wno-pointer-sign
     -Wno-missing-braces
     -Wno-maybe-uninitialized
     -Wno-format

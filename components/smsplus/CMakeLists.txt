@@ -39,6 +39,7 @@ idf_component_register(
 
 # Suppress warnings from legacy C code
 target_compile_options(${COMPONENT_LIB} PRIVATE
+    -std=gnu17
     -Wno-error=unused-variable
     -Wno-error=unused-but-set-variable
     -Wno-error=unused-function

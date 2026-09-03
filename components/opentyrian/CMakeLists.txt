@@ -63,11 +63,14 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-function
     -Wno-maybe-uninitialized
     -Wno-implicit-function-declaration
-    -Wno-pointer-sign
     -Wno-int-conversion
     -Wno-incompatible-pointer-types
     -Wno-dangling-pointer
     -Wno-array-bounds
     -Wno-address
     -Wno-restrict
+    -Wno-error=attributes
+    -Wno-error=implicit-fallthrough
+    -Wno-error=absolute-value
+    -Wno-error=missing-field-initializers
 )

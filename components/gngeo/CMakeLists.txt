@@ -67,6 +67,15 @@ idf_component_register(
     REQUIRES esp_timer freertos odroid app_common
 )
 
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error=pointer-sign
+    -Wno-error=shift-negative-value
+    -Wno-error=calloc-transposed-args
+    -Wno-error=alloc-size
+    -Wno-error=missing-field-initializers
+    -Wno-error=pointer-to-int-cast
+)
+
 # Build with -O2 for performance, suppress common warnings in legacy code
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -O2
@@ -74,7 +83,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-function
     -Wno-unused-but-set-variable
     -Wno-sign-compare
-    -Wno-pointer-sign
     -Wno-maybe-uninitialized
     -Wno-implicit-function-declaration
     -Wno-int-conversion

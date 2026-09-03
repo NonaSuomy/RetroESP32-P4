@@ -51,6 +51,7 @@ esp_err_t esp_lcd_touch_new_i2c_gt911(const esp_lcd_panel_io_handle_t io, const 
     assert(io != NULL);
     assert(config != NULL);
     assert(out_touch != NULL);
+    *out_touch = NULL;
 
     /* Prepare main structure */
     esp_lcd_touch_handle_t esp_lcd_touch_gt911 = heap_caps_calloc(1, sizeof(esp_lcd_touch_t), MALLOC_CAP_DEFAULT);
@@ -112,7 +113,9 @@ err:
         }
     }
 
-    *out_touch = esp_lcd_touch_gt911;
+    if (ret == ESP_OK) {
+        *out_touch = esp_lcd_touch_gt911;
+    }
 
     return ret;
 }

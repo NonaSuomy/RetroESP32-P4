@@ -204,7 +204,7 @@ static void snes_video_task(void *arg)
         /* BUILD_PIXEL_RGB565 now produces true 6-bit green at render time,
          * so no post-render green expansion loop is needed. */
 
-        /* Direct 2× scale + 270° rotate — no 320×240 staging buffer */
+        /* Direct 2× scale + 180° rotate — no 320×240 staging buffer */
         ili9341_write_frame_rgb565_custom(frame, SNES_FB_W, SNES_FB_H,
                                            2.0f, false);
 
@@ -693,33 +693,19 @@ static bool snes_show_menu(void)
     }
 }
 
-/* ─── Sidebar button labels ───────────────────────────────────── */
+/* ─── Landscape sidebar button labels ─────────────────────────── */
 /*
- * Draw "MENU" and "VOL" button labels in the black side bars.
- *
- * LCD portrait: 480 wide (x) × 800 tall (y).
- * Device held landscape with portrait-top on LEFT:
- *   landscape_x = portrait_y          (small portrait_y → landscape LEFT)
- *   landscape_y = 479 − portrait_x    (small portrait_x → landscape BOTTOM)
- *
- * Touch zone: portrait y < 170 = landscape LEFT  = MENU
- *             portrait y > 630 = landscape RIGHT = VOL
- *
- * SNES game area on LCD: portrait (16, 144) to (463, 655).
- *   LEFT sidebar  = portrait y   0..143  → MENU
- *   RIGHT sidebar = portrait y 656..799  → VOL
- *
- * Glyph rendering (upright text, reading L→R in landscape):
- *   font_col (left=0..right=4)    → portrait_y INCREASES (landscape L→R)
- *   font_row (top=0..bottom=4)    → portrait_x DECREASES (landscape top→bottom)
- *   Characters march in portrait +y direction (= landscape L→R).
+ * SNES frames are 512×448 and centered at physical LCD coordinates
+ * x=256..767, y=76..523. Keep the MENU/VOL labels in the real landscape
+ * side bars; the old implementation used the board's former 480×800
+ * portrait coordinates and was drawn partly off-panel.
  */
 
 /* Persistent sidebar button buffers — allocated once, reused every frame */
 static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
 static const struct { const char *text; int px, py, pw, ph; } s_sidebar_btns[] = {
-    { "MENU", 200, 22,  80, 100 },       /* landscape LEFT  sidebar (portrait y < 144) */
-    { "VOL",  200, 700, 80,  84 },       /* landscape RIGHT sidebar (portrait y > 656) */
+    { "MENU",  72, 280, 96, 40 },         /* left landscape sidebar */
+    { "VOL",  856, 280, 96, 40 },         /* right landscape sidebar */
 };
 
 static void snes_init_sidebar_buttons(void)
@@ -755,15 +741,13 @@ static void snes_init_sidebar_buttons(void)
             }
         }
 
-        /* Render upright text reading L→R in landscape */
+        /* Render upright text reading left-to-right in landscape. */
         const char *s = s_sidebar_btns[b].text;
         int nch = 0;
         for (const char *p = s; *p; p++) nch++;
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
+        int txt_pw = nch * (CW + GAP) - GAP;
         int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
+        int oy = (ph - CH) / 2;
 
         for (int ci = 0; ci < nch; ci++) {
             int idx = -1;
@@ -772,21 +756,21 @@ static void snes_init_sidebar_buttons(void)
             else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
             if (idx < 0) continue;
 
-            int char_by = oy + ci * (CW + GAP);
+            int char_x = ox + ci * (CW + GAP);
 
             for (int fr = 0; fr < 5; fr++)
                 for (int fc = 0; fc < 5; fc++)
                     if (font5x5[idx][fr] & (0x10 >> fc))
                         for (int sr = 0; sr < SC; sr++)
                             for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
+                                int bx = char_x + fc * SC + sc;
+                                int by = oy + fr * SC + sr;
                                 if (bx >= 0 && bx < pw && by >= 0 && by < ph)
                                     buf[by * pw + bx] = COL_TXT;
                             }
         }
 
-        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered, portrait (%d,%d) %dx%d",
+        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered, landscape (%d,%d) %dx%d",
                  b, s_sidebar_btns[b].text, s_sidebar_btns[b].px, s_sidebar_btns[b].py, pw, ph);
     }
 }
@@ -1001,9 +985,9 @@ void snes_run(const char *rom_path)
         S9xInitSuperFX();
         SuperFX.pvRam = Memory.SRAM;
         SuperFX.nRamBanks = 2;  /* 128KB = 2 x 64KB banks */
-        /* Ensure SRAMMask covers full 128KB for GSU bank access */
-        if (Memory.SRAMMask < 0x1FFFF)
-            Memory.SRAMMask = 0x1FFFF;  /* 128KB-1 */
+        /* SRAMMask is uint16_t in this Snes9x port; keep the value representable. */
+        if (Memory.SRAMMask < 0xFFFF)
+            Memory.SRAMMask = 0xFFFF;
         S9xResetSuperFX();
         /* Ensure GSU.pvRam matches after reset */
         GSU.pvRam = SuperFX.pvRam;

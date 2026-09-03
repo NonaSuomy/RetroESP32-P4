@@ -1,3 +1,6 @@
+#ifdef BIT
+#undef BIT
+#endif
 #include "mame_layer.h"
 #include <string.h>
  #include <stdio.h>

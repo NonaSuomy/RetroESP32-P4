@@ -26,9 +26,11 @@
 #define SLONG signed int
 #define UBYTE unsigned char
 #define UWORD unsigned short
+#ifndef ULONG
 #ifndef HAVE_WINDOWS_H
 /* Windows headers typedef ULONG */
 #define ULONG unsigned int
+#endif
 #endif
 /* Note: in various parts of the emulator we assume that char is 1 byte
    and int is 4 bytes. */

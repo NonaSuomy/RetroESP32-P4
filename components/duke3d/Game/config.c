@@ -234,7 +234,8 @@ void CONFIG_SetDefaults( void )
    NumVoices = 32;
    NumChannels = 1;
    NumBits = 16;
-   MixRate = 11000;
+   /* The P4 SDL audio shim and I2S clock run at 22050 Hz. */
+   MixRate = 22050;
 
    // mouse
    mouseSensitivity_X = 16;
@@ -742,7 +743,8 @@ void CONFIG_ReadSetup( void )
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "NumBits",&NumBits);
    NumBits = 16;
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "MixRate",&MixRate);
-   MixRate = 11000;
+   /* Keep the mixer rate identical to the P4 SDL/I2S output rate. */
+   MixRate = 22050;
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "MidiPort",&MidiPort);
    SCRIPT_GetNumber( scripthandle, "Sound Setup", "BlasterAddress",&dummy);
    BlasterConfig.Address = dummy;
@@ -909,4 +911,3 @@ void CONFIG_WriteSetup( void )
    SCRIPT_Save (scripthandle, setupfilename);
    SCRIPT_Free (scripthandle);
    }
-

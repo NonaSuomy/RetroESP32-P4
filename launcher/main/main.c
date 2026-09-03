@@ -1,7 +1,7 @@
   #include "includes/core.h"
   #include "includes/definitions.h"
   #include "includes/structures.h"
-  #include "includes/declarations.h"
+#include "includes/declarations.h"
 //}#pragma endregion Includes
 
 //{#pragma region Odroid
@@ -152,7 +152,6 @@
 */
 //{#pragma region Main
   void app_main(void) {
-
     printf("\n-----\n%s\n-----\n", __func__);
     
     nvs_flash_init();
@@ -160,7 +159,6 @@
 
     // Audio
     odroid_audio_init(16000);
-
 
     VOLUME = odroid_settings_Volume_get();
     odroid_settings_Volume_set(VOLUME);
@@ -177,7 +175,7 @@
 
 #ifndef CONFIG_HDMI_OUTPUT
     // Touch panel
-    gt911_touch_init(7, 8, -1, -1);
+    gt911_touch_init(18, 19, 40, 41);
 #endif
 
     // === SAFE MODE: Hold button A during boot ===
@@ -186,7 +184,9 @@
     vTaskDelay(pdMS_TO_TICKS(500));
     {
         odroid_gamepad_state boot_state = odroid_input_read_raw();
-        if (boot_state.values[ODROID_INPUT_A]) {
+        /* A USB keyboard can report a startup key state; only allow the
+           physical controller to request safe mode. */
+        if (boot_state.values[ODROID_INPUT_A] && !odroid_input_usb_gamepad_connected()) {
             printf("\n*** SAFE MODE: Button A held during boot ***\n");
             STEP = 0;
             RESTART = false;
@@ -227,7 +227,7 @@
     switch(esp_reset_reason()) {
       case ESP_RST_POWERON:
         RESTART = false;
-        STEP = 1;
+        STEP = 3; /* start on NES, not the Favorites browser */
         ROMS.offset = 0;
       break;
       case ESP_RST_SW:
@@ -240,7 +240,7 @@
     // Safe mode: override any restart/restore if button A was held at boot
     if (SAFE_MODE) {
         RESTART = false;
-        STEP = 1;
+        STEP = 3;
         ROMS.offset = 0;
     }
     if(RESTART) {
@@ -305,15 +305,6 @@
       display_flush();
     }
     //xTaskCreate(launcher, "launcher", 8192, NULL, 5, NULL);
-
-    /* Auto-detect unknown USB controller and launch mapping wizard */
-    if (odroid_input_usb_gamepad_connected() && !odroid_input_usb_map_exists()) {
-      run_map_controller_wizard();
-      /* Redraw after wizard */
-      draw_background();
-      restore_layout();
-      display_flush();
-    }
 
     launcher();
   }
@@ -448,14 +439,18 @@
     const char *dot = strrchr(name, '.');
     if (!dot) return false;
     const char *ext = dot + 1;
+    /* Coleco BIOS is a system file, not a selectable cartridge. */
+    if (step == 8 && strcasecmp(name, "BIOS.col") == 0) return false;
     /* Neo Geo (step 17): hide neogeo.zip and gngeo_data.zip */
     if (step == 17 && is_neogeo_system_file(name)) return false;
     if (strlen(EXTENSIONS[step]) > 0 && ext_eq(ext, EXTENSIONS[step])) return true;
     // Atari 800 supports .xex, .atr, and .a52 (Atari 5200 cartridge)
     if (step == 14 && ext_eq(ext, "atr")) return true;
     if (step == 14 && ext_eq(ext, "a52")) return true;
-    // Spectrum supports both .z80 and .sna
+    // Spectrum supports snapshots plus TAP/TZX tape images
     if (step == 10 && ext_eq(ext, "sna")) return true;
+    if (step == 10 && ext_eq(ext, "tap")) return true;
+    if (step == 10 && ext_eq(ext, "tzx")) return true;
     // Atari 2600 supports both .a26 and .bin
     if (step == 11 && ext_eq(ext, "bin")) return true;
     // SNES supports both .smc and .sfc
@@ -473,7 +468,7 @@
    *  0    ota_0     nofrendo (NES)  .nes
    *  1    ota_1     gnuboy (GB/GBC) .gb .gbc
    *  2    ota_2     smsplus (SMS)   .sms .gg .col
-   *  3    ota_3     spectrum (ZX)   .z80 .sna
+   *  3    ota_3     spectrum (ZX)   .z80 .sna .tap .tzx
    *  4    ota_4     stella (A26)    .a26 .bin
    *  5    ota_5     prosystem (A78) .a78
    *  6    ota_6     handy (LNX)     .lnx
@@ -492,6 +487,8 @@
     if(ext_eq(ext, "col")) return 2;   /* ota_2: smsplus */
     if(ext_eq(ext, "z80")) return 3;   /* ota_3: spectrum */
     if(ext_eq(ext, "sna")) return 3;   /* ota_3: spectrum */
+    if(ext_eq(ext, "tap")) return 3;   /* ota_3: spectrum tape */
+    if(ext_eq(ext, "tzx")) return 3;   /* ota_3: spectrum tape */
     if(ext_eq(ext, "a26")) return 4;   /* ota_4: stella */
     if(ext_eq(ext, "bin")) return 4;   /* ota_4: stella */
     if(ext_eq(ext, "a78")) return 5;   /* ota_5: prosystem */
@@ -526,6 +523,7 @@
     if (ext_eq(ROM.ext, "atr")) return "a800";
     if (ext_eq(ROM.ext, "bin")) return "a26";
     if (ext_eq(ROM.ext, "gen")) return "gen";
+    if (ext_eq(ROM.ext, "tap") || ext_eq(ROM.ext, "tzx")) return "spectrum";
     return ROM.ext;
   }
 //}#pragma endregion Helpers
@@ -806,6 +804,20 @@
         }
         closedir(dir);
       }
+      ESP_LOGI("launcher", "ROM inventory: %s (%d found)", EMULATORS[e], ROM_COUNTS[e]);
+      dir = opendir(path);
+      if (dir) {
+        struct dirent *ent;
+        int listed = 0;
+        while ((ent = readdir(dir)) != NULL) {
+          if (ent->d_name[0] == '.') continue;
+          if (matches_rom_extension(ent->d_name, e)) {
+            ESP_LOGI("launcher", "  %s/%s", path, ent->d_name);
+            listed++;
+          }
+        }
+        closedir(dir);
+      }
     }
   }
 //}#pragma endregion ROM Counts
@@ -871,7 +883,21 @@
   /* ─── MAP CONTROLLER wizard ─────────────────────────────────────── */
   void run_map_controller_wizard(void)
   {
-    if (!odroid_input_usb_gamepad_connected()) {
+    /* A controller's VID/PID is published before the HID task finishes its
+     * one-second startup settle delay. Waiting here prevents the launcher
+     * from consuming the one-time "new controller" event too early and then
+     * refusing to run the wizard again until the USB cable is replugged. */
+    gamepad_state_t initial_gp;
+    uint16_t initial_vid = 0, initial_pid = 0;
+    memset(&initial_gp, 0, sizeof(initial_gp));
+    for (int wait = 0; wait < 30; wait++) {
+      gamepad_get_state(&initial_gp);
+      gamepad_get_vid_pid(&initial_vid, &initial_pid);
+      if (initial_gp.connected || initial_gp.keyboard_keys != 0 ||
+          initial_vid != 0 || initial_pid != 0) break;
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (!initial_gp.connected && initial_vid == 0 && initial_pid == 0) {
       /* No controller — show message and return */
       clear_screen();
       draw_text(40, 200, (char *)"CONNECT USB CONTROLLER", false, true, false);
@@ -891,12 +917,34 @@
     odroid_usb_map_t new_map;
     memset(&new_map, 0, sizeof(new_map));
 
+    /* A keyboard is already mapped to the standard controls by the HID
+       layer. It can still drive this wizard (including for composite
+       keyboard/gamepad receivers), so it no longer leaves the screen stuck
+       at PRESS: A when no gamepad button report is available. */
+    static const uint32_t keyboard_steps[ODROID_USB_MAP_COUNT] = {
+      GAMEPAD_KEY_A, GAMEPAD_KEY_B, GAMEPAD_KEY_X, GAMEPAD_KEY_Y,
+      GAMEPAD_KEY_L, GAMEPAD_KEY_R, GAMEPAD_KEY_SELECT, GAMEPAD_KEY_START,
+      GAMEPAD_KEY_UP, GAMEPAD_KEY_DOWN, GAMEPAD_KEY_LEFT, GAMEPAD_KEY_RIGHT
+    };
+    static const uint32_t default_buttons[ODROID_USB_MAP_COUNT] = {
+      GAMEPAD_BTN_A, GAMEPAD_BTN_B, GAMEPAD_BTN_X, GAMEPAD_BTN_Y,
+      GAMEPAD_BTN_L1 | GAMEPAD_BTN_L2, GAMEPAD_BTN_R1 | GAMEPAD_BTN_R2,
+      GAMEPAD_BTN_SELECT, GAMEPAD_BTN_START, 0, 0, 0, 0
+    };
+
     for (int i = 0; i < ODROID_USB_MAP_COUNT; i++) {
       bool is_dpad = (i >= 8);
 
       clear_screen();
       char prompt[40];
-      snprintf(prompt, sizeof(prompt), "PRESS: %s", btn_names[i]);
+      if (i < 8) {
+        /* The keyboard fallback is deliberately visible so a keyboard or a
+         * controller receiver with a keyboard interface is not ambiguous. */
+        const char *keyboard_hint[] = {"Z", "X", "A", "S", "Q", "W", "SHIFT", "ENTER"};
+        snprintf(prompt, sizeof(prompt), "PRESS: %s (%s)", btn_names[i], keyboard_hint[i]);
+      } else {
+        snprintf(prompt, sizeof(prompt), "PRESS: %s", btn_names[i]);
+      }
       draw_text(40, 180, prompt, false, true, false);
 
       /* Sub-text showing progress */
@@ -905,14 +953,26 @@
       draw_text(40, 230, progress, false, false, false);
       display_flush();
 
-      /* Wait for all inputs released first */
+      /* Wait for all inputs released first, but never let one stale startup
+       * report strand the mapper. Some USB receivers send a held/phantom
+       * report until the first real report arrives. */
       gamepad_state_t gp;
+      int release_checks = 0;
       do {
         vTaskDelay(pdMS_TO_TICKS(50));
         gamepad_get_state(&gp);
-      } while (gp.buttons != 0 || gp.dpad != 0 ||
+        if (gp.keyboard_keys & GAMEPAD_KEY_MENU) {
+          ESP_LOGI("launcher", "Controller mapper cancelled by keyboard Escape");
+          return;
+        }
+        release_checks++;
+      } while (release_checks < 40 &&
+               (gp.buttons != 0 || gp.keyboard_keys != 0 || gp.dpad != 0 ||
                gp.axis_lx < -96 || gp.axis_lx > 96 ||
-               gp.axis_ly < -96 || gp.axis_ly > 96);
+               gp.axis_ly < -96 || gp.axis_ly > 96));
+      if (release_checks >= 40) {
+        ESP_LOGW("launcher", "Controller mapper input stayed asserted; accepting the next report");
+      }
 
       /* Wait for an input */
       uint32_t pressed = 0;
@@ -920,6 +980,10 @@
       while (!detected) {
         vTaskDelay(pdMS_TO_TICKS(30));
         gamepad_get_state(&gp);
+        if (gp.keyboard_keys & GAMEPAD_KEY_MENU) {
+          ESP_LOGI("launcher", "Controller mapper cancelled by keyboard Escape");
+          return;
+        }
         if (!gp.connected) {
           /* Controller disconnected mid-wizard */
           clear_screen();
@@ -932,6 +996,15 @@
         if (gp.buttons != 0) {
           pressed = gp.buttons;
           detected = true;
+        }
+        /* Keyboard fallback: use the known keyboard-to-control mapping as
+           the saved gamepad equivalent. This is also useful when a USB
+           receiver exposes a keyboard interface before its gamepad one. */
+        if (!detected && (gp.keyboard_keys & keyboard_steps[i])) {
+          pressed = default_buttons[i];
+          detected = true;
+          ESP_LOGI("launcher", "Controller map step %s detected from keyboard",
+                   btn_names[i]);
         }
         /* For d-pad entries, also accept hat switch and analog stick */
         if (is_dpad && !detected) {
@@ -1168,6 +1241,14 @@
   void apply_brightness() {
     const int DUTY_MAX = 0x1fff;
     BRIGHTNESS = get_brightness();
+    /* Protect the PWM lookup from stale/corrupt NVS values.  An out-of-range
+       brightness index can calculate an invalid duty and leave GPIO20 dark. */
+    if (BRIGHTNESS < 0 || BRIGHTNESS >= BRIGHTNESS_COUNT) {
+      ESP_LOGW("launcher", "Invalid saved brightness %ld; resetting to 100%%",
+               (long)BRIGHTNESS);
+      BRIGHTNESS = BRIGHTNESS_COUNT - 1;
+      odroid_settings_Backlight_set(BRIGHTNESS);
+    }
     int duty = DUTY_MAX * (BRIGHTNESS_LEVELS[BRIGHTNESS] * 0.01f);
 
     if(is_backlight_initialized()) {
@@ -1179,13 +1260,8 @@
         //ledc_fade_start(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, LEDC_FADE_WAIT_DONE /*LEDC_FADE_NO_WAIT|LEDC_FADE_WAIT_DONE|LEDC_FADE_MAX*/);
         //ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
         //ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
-        ledc_set_fade_time_and_start(
-          LEDC_LOW_SPEED_MODE,
-          LEDC_CHANNEL_0,
-          duty,
-            25,
-          LEDC_FADE_WAIT_DONE
-        );
+        ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, duty);
+        ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
       }
     }
   }
@@ -2149,6 +2225,11 @@
           }
 
           ROMS.total = SORTED_COUNT;
+
+          ESP_LOGI("launcher", "Found %d item(s) in %s:", ROMS.total, path);
+          for (int i = 0; i < SORTED_COUNT; i++) {
+            ESP_LOGI("launcher", "  [%02d] %s/%s", i + 1, path, SORTED_FILES[i]);
+          }
         }
       }
     }
@@ -2707,9 +2788,9 @@
    *   Row 2: Z X C V B N M
    *   Row 3: [SPACE] [DEL] [CLOSE]
    *
-   * Touch coordinates from GT911 are portrait 480x800.
-   * UI is 800x480 (270 deg CCW rotation).
-   * Mapping: ui_x = touch_y,  ui_y = 479 - touch_x
+   * GT911 reports the physical 1024x600 landscape panel. The display helper
+   * maps that point into the centered 800x480 launcher viewport and accounts
+   * for the display's 180 degree image rotation.
    */
 
   #define KB_ROWS      4
@@ -2910,9 +2991,9 @@
       uint16_t tx = 0, ty = 0;
       bool touched = gt911_touch_get_xy(&tx, &ty);
 
-      /* Map portrait touch to landscape UI */
-      int ui_x = (int)ty;
-      int ui_y = 479 - (int)tx;
+      /* Map physical landscape touch to the rotated 800x480 UI. */
+      int ui_x = -1, ui_y = -1;
+      odroid_display_touch_to_ui(tx, ty, &ui_x, &ui_y);
 
       if (touched && !was_touched) {
         /* New touch â€” check keyboard hit */
@@ -4019,14 +4100,14 @@
     memcpy(ppa_in, src, in_size);
     free(src);
 
-    /* After 270Â° rotation, dimensions swap: rotated_w = ph, rotated_h = pw.
-       Force 2Ã— scale to fill 480Ã—800 LCD from a 240Ã—400 (or similar) logo. */
-    uint16_t lcd_w = st7701_lcd_width();   /* 480 */
-    uint16_t lcd_h = st7701_lcd_height();  /* 800 */
-    float scale_x = (float)lcd_w / (float)ph;   /* fit rotated width  */
-    float scale_y = (float)lcd_h / (float)pw;   /* fit rotated height */
+    /* Keep the boot logo in the same landscape orientation as the rest of
+       the device. Rotate 180 degrees, then scale to the 1024x600 panel. */
+    uint16_t lcd_w = st7701_lcd_width();   /* 1024 */
+    uint16_t lcd_h = st7701_lcd_height();  /* 600 */
+    float scale_x = (float)lcd_w / (float)pw;
+    float scale_y = (float)lcd_h / (float)ph;
 
-    /* PPA rotate 270Â° + scale â†’ output fills LCD */
+    /* PPA rotate 180 degrees + scale -> output fills LCD */
     uint32_t out_w = lcd_w;
     uint32_t out_h = lcd_h;
     size_t out_size = out_w * out_h * 2;
@@ -4036,7 +4117,7 @@
     if (!ppa_out) { heap_caps_free(ppa_in); return 0; }
 
     esp_err_t ret = ppa_rotate_scale_rgb565_to(
-        ppa_in, pw, ph, 270, scale_x, scale_y,
+        ppa_in, pw, ph, 180, scale_x, scale_y,
         ppa_out, aligned_out, &out_w, &out_h, false);
     heap_caps_free(ppa_in);
     if (ret != ESP_OK) { heap_caps_free(ppa_out); return 0; }
@@ -4384,6 +4465,9 @@
     if (resume) {
       odroid_settings_StartAction_set(ODROID_START_ACTION_RESTART);
     }
+
+    ESP_LOGI("launcher", "ROM launch request: name='%s' ext='%s' path='%s' resume=%d",
+             ROM.name, ROM.ext, rom_path, resume ? 1 : 0);
 
     /* Find the OTA slot for this ROM type */
     int ota_slot = get_ota_slot(ROM.ext);
@@ -4905,6 +4989,12 @@
       {
         uint16_t vid = 0, pid = 0;
         gamepad_get_vid_pid(&vid, &pid);
+        if (vid == 0 || pid == 0) {
+          /* Allow the same controller to run the wizard again after a
+             disconnect, including when the previous attempt was cancelled. */
+          last_wizard_vid = 0;
+          last_wizard_pid = 0;
+        }
         if (vid != 0 && pid != 0 &&
             (vid != last_wizard_vid || pid != last_wizard_pid)) {
           /* New controller detected — check if it has a mapping */
@@ -4929,6 +5019,7 @@
 
         /* --- LEFT: previous system --- */
         if (gamepad.values[ODROID_INPUT_LEFT]) {
+          ESP_LOGI("launcher", "UI input LEFT: browser=%d launcher=%d step=%d", BROWSER, LAUNCHER, STEP);
           if (STEP != 0 || SETTING == 0) {
             STEP--;
             if (STEP < 0) STEP = COUNT - 1;
@@ -4944,6 +5035,7 @@
 
         /* --- RIGHT: next system --- */
         if (gamepad.values[ODROID_INPUT_RIGHT]) {
+          ESP_LOGI("launcher", "UI input RIGHT: browser=%d launcher=%d step=%d", BROWSER, LAUNCHER, STEP);
           if (STEP != 0 || SETTING == 0) {
             STEP++;
             if (STEP > COUNT - 1) STEP = 0;
@@ -4956,27 +5048,37 @@
           usleep(100000);
         }
 
-        /* --- UP/DOWN: settings navigation when on STEP 0 --- */
+        /* --- UP/DOWN: select a Settings row, otherwise preserve the
+         * carousel's UP=select and DOWN=back behavior. --- */
         if (gamepad.values[ODROID_INPUT_UP]) {
+          ESP_LOGI("launcher", "UI input UP/select: browser=%d launcher=%d step=%d", BROWSER, LAUNCHER, STEP);
           if (STEP == 0) {
             SETTING--;
             if (SETTING < 0) SETTING = 3;
             draw_settings();
+            usleep(150000);
           }
-          usleep(200000);
         }
-
         if (gamepad.values[ODROID_INPUT_DOWN]) {
+          ESP_LOGI("launcher", "UI input DOWN/back: browser=%d launcher=%d step=%d", BROWSER, LAUNCHER, STEP);
           if (STEP == 0) {
             SETTING++;
             if (SETTING > 3) SETTING = 0;
             draw_settings();
+            usleep(150000);
+          } else {
+            debounce(ODROID_INPUT_DOWN);
           }
-          usleep(200000);
         }
 
-        /* --- A: enter ROM browser / settings action --- */
-        if (gamepad.values[ODROID_INPUT_A]) {
+        /* --- A/SELECT or UP: enter ROM browser / settings action ---
+         * SELECT is accepted here so the rotated touchscreen SEL button and
+         * keyboard Shift can activate the highlighted row. */
+        bool carousel_select = gamepad.values[ODROID_INPUT_A] ||
+                               gamepad.values[ODROID_INPUT_SELECT] ||
+                               (gamepad.values[ODROID_INPUT_UP] && STEP != 0);
+        if (carousel_select) {
+          ESP_LOGI("launcher", "UI input A: browser=%d launcher=%d step=%d setting=%d", BROWSER, LAUNCHER, STEP, SETTING);
           if (STEP == 0) {
             if (SETTING == 0) {
               delete_recents();
@@ -5009,6 +5111,8 @@
             get_recents();
           }
           debounce(ODROID_INPUT_A);
+          debounce(ODROID_INPUT_SELECT);
+          if (STEP != 0) debounce(ODROID_INPUT_UP);
         }
 
         /* --- B: no action in carousel mode --- */

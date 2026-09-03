@@ -32,17 +32,24 @@ typedef enum {
     GP_FORMAT_PS4,      /* [id=0x01][LX][LY][RX][RY][hat+btn1][btn2][btn3][L2][R2]... */
     GP_FORMAT_PS5,      /* [id=0x01][LX][LY][RX][RY][L2][R2][cnt][hat+btn1][btn2][btn3]... */
     GP_FORMAT_GENERIC,  /* [LX][LY][RX][RY][hat+btn][btn]... or [id][LX][LY]... */
+	GP_FORMAT_SWITCH_PRO, /* Nintendo Switch Pro USB input report 0x30 */
 	GP_FORMAT_DUAL_PSX_ADAPTOR /* [id=0x01][80][80][HatX][HatY][XABY|0][Sel,Start|LX,RX][00] 8 bytes */
 } gp_report_format_t;
 
 /* ========================= Internal State ========================= */
 
 static gamepad_state_t s_state;
+/* Kept separately because gamepad reports can arrive continuously and replace
+ * the shared gamepad snapshot while a keyboard is also connected. */
+static volatile uint32_t s_keyboard_keys;
+static volatile bool s_keyboard_connected;
 static SemaphoreHandle_t s_mutex = NULL;
 static QueueHandle_t s_event_queue = NULL;
 static TaskHandle_t s_usb_task = NULL;
 static TaskHandle_t s_gp_task = NULL;
 static volatile bool s_running = false;
+static hid_host_device_handle_t s_keyboard_handle = NULL;
+static hid_host_device_handle_t s_gamepad_handle = NULL;
 static gp_report_format_t s_format = GP_FORMAT_UNKNOWN;
 static int s_detect_count = 0;  /* number of reports used for format detection */
 static volatile int s_format_log_pending = 0;  /* deferred format detection log */
@@ -50,6 +57,8 @@ static volatile int s_format_log_len = 0;      /* report len for deferred log */
 static volatile int s_raw_dump_count = 0;      /* how many raw dumps have been emitted */
 static uint8_t s_raw_dump_buf[64];             /* buffer for deferred raw hex dump */
 static volatile int s_raw_dump_len = 0;
+static volatile uint32_t s_keyboard_log_pending = 0;
+static volatile uint32_t s_keyboard_log_mask = 0;
 
 /* ========================= Device Identity ========================= */
 static uint16_t s_vid = 0;
@@ -111,6 +120,12 @@ static gp_report_format_t detect_format(const uint8_t *data, int len)
 	// 0x0810 0x0001 Dual PSX Adaptor
 
 	// Step 1: Use the VID/PID combo to identify known controllers.
+	/* The Pro controller emits zero-filled startup packets before its first
+	 * real 0x30 report. Identify it by VID/PID so those packets can never be
+	 * mistaken for a generic joystick at (-128,-128). */
+	if (s_vid == 0x057E && s_pid == 0x2009) {
+		return GP_FORMAT_SWITCH_PRO;
+	}
 	if (len == 8 && s_vid == 0x0810 && s_pid == 0x0001) {
 		return GP_FORMAT_DUAL_PSX_ADAPTOR;
 	}
@@ -230,8 +245,49 @@ static void parse_gamepad_report(const uint8_t *data, int len)
     gamepad_state_t gs;
     memset(&gs, 0, sizeof(gs));
     gs.connected = 1;
+    /* Keyboard and gamepad can be connected at the same time. Preserve the
+     * keyboard snapshot when a gamepad report updates the shared state. */
+    gs.keyboard_keys = s_keyboard_keys;
 
     switch (s_format) {
+	case GP_FORMAT_SWITCH_PRO:
+		/* Standard wired Pro Controller report 0x30:
+		 * [id][timer][battery][buttons0..2][LX0..2][RX0..2][rumble]
+		 * Buttons are a 24-bit little-endian mask; sticks are packed 12-bit.
+		 */
+		if (len < 13 || data[0] != 0x30) return;
+		{
+			uint32_t b = (uint32_t)data[3] | ((uint32_t)data[4] << 8) |
+			             ((uint32_t)data[5] << 16);
+			if (b & (1u << 3))  gs.buttons |= GAMEPAD_BTN_A;
+			if (b & (1u << 2))  gs.buttons |= GAMEPAD_BTN_B;
+			if (b & (1u << 1))  gs.buttons |= GAMEPAD_BTN_X;
+			if (b & (1u << 0))  gs.buttons |= GAMEPAD_BTN_Y;
+			if (b & (1u << 22)) gs.buttons |= GAMEPAD_BTN_L1;
+			if (b & (1u << 6))  gs.buttons |= GAMEPAD_BTN_R1;
+			if (b & (1u << 23)) gs.buttons |= GAMEPAD_BTN_L2;
+			if (b & (1u << 7))  gs.buttons |= GAMEPAD_BTN_R2;
+			if (b & (1u << 8))  gs.buttons |= GAMEPAD_BTN_SELECT;
+			if (b & (1u << 9))  gs.buttons |= GAMEPAD_BTN_START;
+			if (b & (1u << 11)) gs.buttons |= GAMEPAD_BTN_L3;
+			if (b & (1u << 10)) gs.buttons |= GAMEPAD_BTN_R3;
+			if (b & (1u << 12)) gs.buttons |= GAMEPAD_BTN_HOME;
+			if (b & (1u << 16)) gs.dpad |= GAMEPAD_DPAD_DOWN;
+			if (b & (1u << 17)) gs.dpad |= GAMEPAD_DPAD_UP;
+			if (b & (1u << 18)) gs.dpad |= GAMEPAD_DPAD_RIGHT;
+			if (b & (1u << 19)) gs.dpad |= GAMEPAD_DPAD_LEFT;
+			uint16_t lx = data[6] | ((uint16_t)(data[7] & 0x0F) << 8);
+			uint16_t ly = (data[7] >> 4) | ((uint16_t)data[8] << 4);
+			uint16_t rx = data[9] | ((uint16_t)(data[10] & 0x0F) << 8);
+			uint16_t ry = (data[10] >> 4) | ((uint16_t)data[11] << 4);
+			gs.axis_lx = (int16_t)(lx >> 4) - 128;
+			/* This controller reports stick Y in the opposite direction from
+			 * the launcher/emulator convention: physical up must be negative. */
+			gs.axis_ly = 128 - (int16_t)(ly >> 4);
+			gs.axis_rx = (int16_t)(rx >> 4) - 128;
+			gs.axis_ry = (int16_t)(ry >> 4) - 128;
+		}
+		break;
     case GP_FORMAT_PS3:
         /* PS3 DualShock 3: [0x01][00][btn1][btn2][ps_btn][00][LX][LY][RX][RY]...
          * btn1 byte[2]: bit0=Sel bit1=L3 bit2=R3 bit3=Start bit4=Up bit5=Right bit6=Down bit7=Left
@@ -384,6 +440,44 @@ static void parse_gamepad_report(const uint8_t *data, int len)
     xSemaphoreGive(s_mutex);
 }
 
+/* Boot-protocol keyboard report: modifiers, reserved, six key usages. */
+static void parse_keyboard_report(const uint8_t *data, int len)
+{
+    if (len < 8) return;
+    uint32_t keys = 0;
+    int start = (len >= 9 && data[0] == 0x01) ? 1 : 0;
+    for (int i = start + 2; i < start + 8 && i < len; ++i) {
+        switch (data[i]) {
+        case 0x52: keys |= GAMEPAD_KEY_UP; break;
+        case 0x51: keys |= GAMEPAD_KEY_DOWN; break;
+        case 0x50: keys |= GAMEPAD_KEY_LEFT; break;
+        case 0x4F: keys |= GAMEPAD_KEY_RIGHT; break;
+        case 0x1D: keys |= GAMEPAD_KEY_A; break; /* Z */
+        case 0x1B: keys |= GAMEPAD_KEY_B; break; /* X */
+        case 0x04: keys |= GAMEPAD_KEY_X; break; /* A */
+        case 0x16: keys |= GAMEPAD_KEY_Y; break; /* S */
+        case 0x14: keys |= GAMEPAD_KEY_L; break; /* Q */
+        case 0x1A: keys |= GAMEPAD_KEY_R; break; /* W */
+        case 0x28: keys |= GAMEPAD_KEY_START; break; /* Enter */
+        case 0x29: keys |= GAMEPAD_KEY_MENU; break; /* Escape */
+        case 0x2D: keys |= GAMEPAD_KEY_VOLUME_DOWN; break; /* - */
+        case 0x2E: keys |= GAMEPAD_KEY_VOLUME_UP; break; /* = */
+        default: break;
+        }
+    }
+    /* Either Shift key acts as Select. */
+    if (data[start] & 0x22) keys |= GAMEPAD_KEY_SELECT;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_keyboard_keys = keys;
+    s_state.keyboard_keys = keys;
+    xSemaphoreGive(s_mutex);
+    /* Defer logging out of the USB callback, but retain every state change. */
+    if (keys != s_keyboard_log_mask) {
+        s_keyboard_log_mask = keys;
+        s_keyboard_log_pending = 1;
+    }
+}
+
 /* ========================= HID Host Callbacks ========================= */
 
 /**
@@ -401,8 +495,9 @@ static void hid_interface_cb(hid_host_device_handle_t hid_dev,
         if (err == ESP_OK && data_len > 0) {
             hid_host_dev_params_t params;
             hid_host_device_get_params(hid_dev, &params);
-            /* Only parse non-keyboard, non-mouse devices */
-            if (params.proto != HID_PROTOCOL_KEYBOARD && params.proto != HID_PROTOCOL_MOUSE) {
+            if (params.proto == HID_PROTOCOL_KEYBOARD) {
+                parse_keyboard_report(data, (int)data_len);
+            } else if (params.proto != HID_PROTOCOL_MOUSE) {
                 parse_gamepad_report(data, (int)data_len);
             }
         }
@@ -410,16 +505,44 @@ static void hid_interface_cb(hid_host_device_handle_t hid_dev,
     }
     case HID_HOST_INTERFACE_EVENT_DISCONNECTED:
         ESP_LOGI(TAG, "USB HID device disconnected");
+        hid_host_dev_params_t params;
+        bool is_keyboard = false;
+        bool is_gamepad = false;
+        if (hid_host_device_get_params(hid_dev, &params) == ESP_OK) {
+            is_keyboard = (params.proto == HID_PROTOCOL_KEYBOARD);
+            is_gamepad = (params.proto != HID_PROTOCOL_KEYBOARD &&
+                          params.proto != HID_PROTOCOL_MOUSE);
+        }
+        /* The device descriptor can already be partially torn down by the
+         * time DISCONNECTED is delivered, so retain the handle identity as
+         * a fallback for composite USB devices. */
+        if (hid_dev == s_keyboard_handle) is_keyboard = true;
+        if (hid_dev == s_gamepad_handle) is_gamepad = true;
         hid_host_device_close(hid_dev);
-        /* Clear state */
         xSemaphoreTake(s_mutex, portMAX_DELAY);
-        memset(&s_state, 0, sizeof(s_state));
+        if (is_keyboard) {
+            /* A keyboard may be one interface of a composite gamepad. Do not
+             * erase the gamepad snapshot when only its keyboard interface
+             * disconnects. */
+            s_keyboard_connected = false;
+            s_keyboard_keys = 0;
+            s_state.keyboard_keys = 0;
+            s_keyboard_handle = NULL;
+        } else if (is_gamepad) {
+            /* Preserve a still-connected keyboard while clearing gamepad
+             * input. The old code memset the whole shared state here, which
+             * made reconnecting a keyboard disturb the controller. */
+            uint32_t keyboard_keys = s_keyboard_keys;
+            memset(&s_state, 0, sizeof(s_state));
+            s_state.keyboard_keys = keyboard_keys;
+            s_vid = 0;
+            s_pid = 0;
+            /* Reset format detection for next device */
+            s_format = GP_FORMAT_UNKNOWN;
+            s_detect_count = 0;
+            s_gamepad_handle = NULL;
+        }
         xSemaphoreGive(s_mutex);
-        s_vid = 0;
-        s_pid = 0;
-        /* Reset format detection for next device */
-        s_format = GP_FORMAT_UNKNOWN;
-        s_detect_count = 0;
         break;
     case HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR:
         /* Transfer error — most likely device disconnecting.
@@ -547,6 +670,49 @@ static void ds3_enable_operational(hid_host_device_handle_t hid_dev)
     }
 }
 
+/* The genuine Switch Pro controller enumerates, but remains silent until the
+ * USB transport handshake is sent. These reports must go through the
+ * controller's interrupt OUT endpoint. The class-control SET_REPORT path
+ * returns STALL on the official 057E:2009 device, which was why a controller
+ * plugged in at boot stayed at all-zero reports until it was re-enumerated. */
+static const char *switch_pro_err_name(esp_err_t err)
+{
+	return (err == ESP_OK) ? "OK" : esp_err_to_name(err);
+}
+
+static void switch_pro_enable(hid_host_device_handle_t hid_dev)
+{
+	const struct {
+		uint8_t command;
+		const char *name;
+	} usb_commands[] = {
+		{ 0x02, "handshake 1" },
+		{ 0x03, "baudrate" },
+		{ 0x02, "handshake 2" },
+		{ 0x04, "no-timeout" },
+	};
+
+	for (size_t i = 0; i < sizeof(usb_commands) / sizeof(usb_commands[0]); ++i) {
+		/* The report ID is part of the raw interrupt-OUT payload. */
+		uint8_t report[] = { 0x80, usb_commands[i].command };
+		esp_err_t err = hid_host_device_send_report(hid_dev, report, sizeof(report), 1000);
+		ESP_LOGI(TAG, "Switch Pro USB %s: %s", usb_commands[i].name,
+		         switch_pro_err_name(err));
+		vTaskDelay(pdMS_TO_TICKS(25));
+	}
+
+	/* Output report 0x01: packet number, eight rumble bytes, subcommand 0x03,
+	 * and report mode 0x30. This is 12 bytes including the report ID. */
+	uint8_t mode[] = {
+		0x01, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x03, 0x30,
+	};
+	esp_err_t err = hid_host_device_send_report(hid_dev, mode, sizeof(mode), 1000);
+	ESP_LOGI(TAG, "Switch Pro report mode 0x30: %s", switch_pro_err_name(err));
+	vTaskDelay(pdMS_TO_TICKS(50));
+}
+
 /* ========================= Gamepad Processing Task ========================= */
 
 static const char *proto_names[] = { "NONE", "KEYBOARD", "MOUSE" };
@@ -558,10 +724,15 @@ static void gamepad_task(void *arg)
     ESP_LOGI(TAG, "Waiting for USB HID gamepad...");
 
     while (s_running) {
+        if (s_keyboard_log_pending) {
+            s_keyboard_log_pending = 0;
+            ESP_LOGI(TAG, "Keyboard state: 0x%08lx (Z=A, X=B, arrows=D-pad)",
+                     (unsigned long)s_keyboard_log_mask);
+        }
         /* Deferred format detection log (avoid logging in USB callback context) */
         if (s_format_log_pending) {
             s_format_log_pending = 0;
-            const char *names[] = {"unknown", "PS3", "PS4", "PS5", "Generic", "Dual PSX Adaptor"};
+			const char *names[] = {"unknown", "PS3", "PS4", "PS5", "Generic", "Switch Pro", "Dual PSX Adaptor"};
             ESP_LOGI(TAG, "Detected report format: %s (len=%d)", names[s_format], s_format_log_len);
         }
 
@@ -605,14 +776,31 @@ static void gamepad_task(void *arg)
                     continue;
                 }
 
+                /* Publish the handle before the one-second stabilization
+                 * delay. Some controllers begin reporting immediately after
+                 * the interface is opened; keeping the handle here also lets
+                 * the disconnect callback classify an early teardown safely. */
+                bool is_gamepad = (params.proto != HID_PROTOCOL_KEYBOARD &&
+                                   params.proto != HID_PROTOCOL_MOUSE);
+                if (is_gamepad) {
+                    s_gamepad_handle = evt.hid_handle;
+                    xSemaphoreTake(s_mutex, portMAX_DELAY);
+                    s_state.connected = 1;
+                    xSemaphoreGive(s_mutex);
+                }
+
                 /* Boot-interface devices: set protocol */
                 if (HID_SUBCLASS_BOOT_INTERFACE == params.sub_class) {
                     hid_class_request_set_protocol(evt.hid_handle, HID_REPORT_PROTOCOL_BOOT);
                 }
 
-                /* NOTE: Removed SET_IDLE — PS4/PS5 gamepads may STALL this request,
-                 * and the HID host library doesn't recover EP0 from STALL properly.
-                 * SET_IDLE is only required for boot keyboards. */
+                /* SET_IDLE is useful for boot keyboards; gamepads may STALL it. */
+                if (params.proto == HID_PROTOCOL_KEYBOARD) {
+                    s_keyboard_connected = true;
+                    s_keyboard_handle = evt.hid_handle;
+                    hid_class_request_set_idle(evt.hid_handle, 0, 0);
+                    ESP_LOGI(TAG, "USB keyboard enabled (boot protocol)");
+                }
 
                 /* Let device settle after SET_CONFIGURATION. PS4 controllers may
                  * draw high current that causes VBUS droop → brief disconnect.
@@ -647,13 +835,15 @@ static void gamepad_task(void *arg)
                     ESP_LOGI(TAG, "DS3 detected (054C:0268) — sending operational-mode enable");
                     ds3_enable_operational(evt.hid_handle);
                 }
+				if (s_vid == 0x057E && s_pid == 0x2009) {
+					ESP_LOGI(TAG, "Switch Pro detected (057E:2009) — initializing USB HID transport");
+					switch_pro_enable(evt.hid_handle);
+				}
 
                 /* Mark connected for gamepad devices */
-                if (params.proto != HID_PROTOCOL_KEYBOARD && params.proto != HID_PROTOCOL_MOUSE) {
-                    xSemaphoreTake(s_mutex, portMAX_DELAY);
-                    s_state.connected = 1;
-                    xSemaphoreGive(s_mutex);
-                }
+                /* The state was published before stabilization above so
+                 * early input and disconnects are associated with this HID
+                 * interface. */
             }
         }
     }
@@ -670,6 +860,10 @@ esp_err_t gamepad_init(const gamepad_config_t *config)
     }
 
     memset(&s_state, 0, sizeof(s_state));
+    s_keyboard_keys = 0;
+    s_keyboard_connected = false;
+    s_keyboard_handle = NULL;
+    s_gamepad_handle = NULL;
     s_format = GP_FORMAT_UNKNOWN;
     s_detect_count = 0;
     s_format_log_pending = 0;
@@ -773,6 +967,7 @@ void gamepad_get_state(gamepad_state_t *state)
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     memcpy(state, &s_state, sizeof(gamepad_state_t));
+    state->keyboard_keys = s_keyboard_keys;
     xSemaphoreGive(s_mutex);
 }
 
@@ -783,6 +978,11 @@ bool gamepad_is_connected(void)
     bool conn = (s_state.connected != 0);
     xSemaphoreGive(s_mutex);
     return conn;
+}
+
+bool gamepad_is_keyboard_connected(void)
+{
+    return s_keyboard_connected;
 }
 
 void gamepad_buttons_to_str(uint32_t buttons, char *buf, size_t buf_size)

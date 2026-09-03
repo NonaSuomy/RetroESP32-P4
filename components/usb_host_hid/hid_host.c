@@ -110,10 +110,15 @@ typedef struct hid_interface {
     hid_host_dev_params_t dev_params;       /**< USB device parameters */
     uint8_t ep_in;                          /**< Interrupt IN EP number */
     uint16_t ep_in_mps;                     /**< Interrupt IN max size */
+    uint8_t ep_out;                         /**< Optional interrupt OUT EP number */
+    uint16_t ep_out_mps;                    /**< Interrupt OUT max size */
     uint8_t country_code;                   /**< Country code */
     uint16_t report_desc_size;              /**< Size of Report */
     uint8_t *report_desc;                   /**< Pointer to HID Report */
     usb_transfer_t *in_xfer;                /**< Pointer to IN transfer buffer */
+    usb_transfer_t *out_xfer;               /**< Optional pointer to OUT transfer buffer */
+    SemaphoreHandle_t out_xfer_done;        /**< Signals completion of an OUT transfer */
+    esp_err_t out_xfer_result;              /**< Result captured by the OUT callback */
     hid_host_interface_event_cb_t user_cb;  /**< Interface application callback */
     void *user_cb_arg;                      /**< Interface application callback arg */
     hid_iface_state_t state;                /**< Interface state */
@@ -279,6 +284,28 @@ static inline const usb_ep_desc_t *get_iface_ep_in(const usb_intf_desc_t *iface_
 }
 
 /**
+ * @brief Returns the first interrupt OUT endpoint descriptor, if present.
+ *
+ * Most boot keyboards expose only an IN endpoint. Controllers such as the
+ * Nintendo Pro Controller also expose an OUT endpoint and require their USB
+ * initialization reports to be sent there instead of through EP0.
+ */
+static inline const usb_ep_desc_t *get_iface_ep_out(const usb_intf_desc_t *iface_desc,
+                                                    const size_t total_length)
+{
+    assert(iface_desc);
+    const usb_ep_desc_t *ep_desc = NULL;
+    for (int i = 0; i < iface_desc->bNumEndpoints; i++) {
+        int ep_offset = 0;
+        ep_desc = usb_parse_endpoint_descriptor_by_index(iface_desc, i, total_length, &ep_offset);
+        if (ep_desc && !USB_EP_DESC_GET_EP_DIR(ep_desc)) {
+            return ep_desc;
+        }
+    }
+    return NULL;
+}
+
+/**
  * @brief Check HID interface descriptor present
  *
  * @param[in] config_desc  Pointer to Configuration Descriptor
@@ -351,7 +378,8 @@ static inline void hid_host_user_device_callback(hid_iface_t *iface,
 static esp_err_t hid_host_add_interface(hid_device_t *hid_device,
                                         const usb_intf_desc_t *iface_desc,
                                         const hid_descriptor_t *hid_desc,
-                                        const usb_ep_desc_t *ep_in_desc)
+                                        const usb_ep_desc_t *ep_in_desc,
+                                        const usb_ep_desc_t *ep_out_desc)
 {
     hid_iface_t *hid_iface = calloc(1, sizeof(hid_iface_t));
 
@@ -384,6 +412,18 @@ static esp_err_t hid_host_add_interface(hid_device_t *hid_device,
         } else {
             ESP_EARLY_LOGE(TAG, "HID device EP IN %#X configuration error",
                            ep_in_desc->bEndpointAddress);
+        }
+    }
+
+    // EP OUT && INT Type (optional; many HID devices do not have one)
+    if (ep_out_desc) {
+        if (!(ep_out_desc->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK) &&
+                (ep_out_desc->bmAttributes & USB_B_ENDPOINT_ADDRESS_EP_NUM_MASK)) {
+            hid_iface->ep_out = ep_out_desc->bEndpointAddress;
+            hid_iface->ep_out_mps = USB_EP_DESC_GET_MPS(ep_out_desc);
+        } else {
+            ESP_EARLY_LOGE(TAG, "HID device EP OUT %#X configuration error",
+                           ep_out_desc->bEndpointAddress);
         }
     }
 
@@ -455,6 +495,7 @@ static esp_err_t hid_host_interface_list_create(hid_device_t *hid_device,
     const usb_intf_desc_t *iface_desc = NULL;
     const hid_descriptor_t *hid_desc = NULL;
     const usb_ep_desc_t *ep_in_desc = NULL;
+    const usb_ep_desc_t *ep_out_desc = NULL;
     int iface_offset = 0;
     int hid_desc_offset = 0;
 
@@ -466,17 +507,20 @@ static esp_err_t hid_host_interface_list_create(hid_device_t *hid_device,
         hid_desc = NULL;
         hid_desc_offset = iface_offset;
         ep_in_desc = NULL;
+        ep_out_desc = NULL;
 
         if (USB_CLASS_HID == iface_desc->bInterfaceClass) {
             ESP_LOGD(TAG, "Found HID, bInterfaceNumber=%d", iface_desc->bInterfaceNumber);
             hid_desc = GET_NEXT_HID_DESC(iface_desc, total_length, hid_desc_offset);
             if (hid_desc) {
                 ep_in_desc = get_iface_ep_in(iface_desc, total_length);
+                ep_out_desc = get_iface_ep_out(iface_desc, total_length);
                 if (ep_in_desc) {
                     HID_RETURN_ON_ERROR( hid_host_add_interface(hid_device,
                                                                 iface_desc,
                                                                 hid_desc,
-                                                                ep_in_desc),
+                                                                ep_in_desc,
+                                                                ep_out_desc),
                                          "Unable to add HID Interface to the RAM list");
                 }
             }
@@ -781,13 +825,51 @@ static void client_event_cb(const usb_host_client_event_msg_t *event, void *arg)
  */
 static esp_err_t hid_host_interface_claim_and_prepare_transfer(hid_iface_t *iface)
 {
-    HID_RETURN_ON_ERROR( usb_host_interface_claim( s_hid_driver->client_handle,
-                                                   iface->parent->dev_hdl,
-                                                   iface->dev_params.iface_num, 0),
-                         "Unable to claim Interface");
+    esp_err_t err = usb_host_interface_claim(s_hid_driver->client_handle,
+                                             iface->parent->dev_hdl,
+                                             iface->dev_params.iface_num, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to claim Interface: %s", esp_err_to_name(err));
+        return err;
+    }
 
-    HID_RETURN_ON_ERROR( usb_host_transfer_alloc(iface->ep_in_mps, 0, &iface->in_xfer),
-                         "Unable to allocate transfer buffer for EP IN");
+    err = usb_host_transfer_alloc(iface->ep_in_mps, 0, &iface->in_xfer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to allocate transfer buffer for EP IN: %s",
+                 esp_err_to_name(err));
+        usb_host_interface_release(s_hid_driver->client_handle,
+                                   iface->parent->dev_hdl,
+                                   iface->dev_params.iface_num);
+        return err;
+    }
+
+    /* Allocate an interrupt OUT transfer when the HID descriptor exposes one.
+     * It is deliberately optional so keyboards and simple gamepads retain the
+     * old IN-only behavior. */
+    if (iface->ep_out && iface->ep_out_mps) {
+        iface->out_xfer_done = xSemaphoreCreateBinary();
+        if (!iface->out_xfer_done) {
+            usb_host_transfer_free(iface->in_xfer);
+            iface->in_xfer = NULL;
+            usb_host_interface_release(s_hid_driver->client_handle,
+                                       iface->parent->dev_hdl,
+                                       iface->dev_params.iface_num);
+            return ESP_ERR_NO_MEM;
+        }
+        err = usb_host_transfer_alloc(iface->ep_out_mps, 0, &iface->out_xfer);
+        if (err != ESP_OK) {
+            vSemaphoreDelete(iface->out_xfer_done);
+            iface->out_xfer_done = NULL;
+            usb_host_transfer_free(iface->in_xfer);
+            iface->in_xfer = NULL;
+            usb_host_interface_release(s_hid_driver->client_handle,
+                                       iface->parent->dev_hdl,
+                                       iface->dev_params.iface_num);
+            ESP_LOGE(TAG, "Unable to allocate transfer buffer for EP OUT: %s",
+                     esp_err_to_name(err));
+            return err;
+        }
+    }
 
     // Change state
     iface->state = HID_INTERFACE_STATE_READY;
@@ -819,7 +901,18 @@ static esp_err_t hid_host_interface_release_and_free_transfer(hid_iface_t *iface
                  esp_err_to_name(release_err));
     }
 
-    ESP_ERROR_CHECK( usb_host_transfer_free(iface->in_xfer) );
+    if (iface->in_xfer) {
+        usb_host_transfer_free(iface->in_xfer);
+        iface->in_xfer = NULL;
+    }
+    if (iface->out_xfer) {
+        usb_host_transfer_free(iface->out_xfer);
+        iface->out_xfer = NULL;
+    }
+    if (iface->out_xfer_done) {
+        vSemaphoreDelete(iface->out_xfer_done);
+        iface->out_xfer_done = NULL;
+    }
 
     // Change state
     iface->state = HID_INTERFACE_STATE_IDLE;
@@ -858,10 +951,25 @@ static esp_err_t hid_host_disable_interface(hid_iface_t *iface)
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "EP flush returned %s (device may be gone)", esp_err_to_name(err));
         }
+        if (iface->ep_out) {
+            err = usb_host_endpoint_halt(iface->parent->dev_hdl, iface->ep_out);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "EP OUT halt returned %s (device may be gone)",
+                         esp_err_to_name(err));
+            }
+            err = usb_host_endpoint_flush(iface->parent->dev_hdl, iface->ep_out);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "EP OUT flush returned %s (device may be gone)",
+                         esp_err_to_name(err));
+            }
+        }
     }
     // If interface state is suspended, the EP is already flushed and halted, only clear the EP
     // If suspended, may return ESP_ERR_INVALID_STATE
     usb_host_endpoint_clear(iface->parent->dev_hdl, iface->ep_in);
+    if (iface->ep_out) {
+        usb_host_endpoint_clear(iface->parent->dev_hdl, iface->ep_out);
+    }
 
     iface->state = HID_INTERFACE_STATE_READY;
 
@@ -913,6 +1021,30 @@ static void in_xfer_done(usb_transfer_t *in_xfer)
     ESP_LOGE(TAG, "Transfer failed, status %d", in_xfer->status);
     // Notify user about transfer or any other error
     hid_host_user_interface_callback(iface, HID_HOST_INTERFACE_EVENT_TRANSFER_ERROR);
+}
+
+/**
+ * @brief HID OUT transfer completion callback.
+ *
+ * This runs from the HID host client's event task, so it only records the
+ * status and wakes the task that submitted the report. No USB operation is
+ * attempted from the callback.
+ */
+static void out_xfer_done(usb_transfer_t *out_xfer)
+{
+    assert(out_xfer);
+    assert(out_xfer->context);
+
+    hid_iface_t *iface = (hid_iface_t *)out_xfer->context;
+    iface->out_xfer_result = (out_xfer->status == USB_TRANSFER_STATUS_COMPLETED)
+                             ? ESP_OK : ESP_FAIL;
+    if (out_xfer->status != USB_TRANSFER_STATUS_COMPLETED) {
+        ESP_LOGW(TAG, "HID OUT transfer completed with status=%d actual=%d",
+                 out_xfer->status, out_xfer->actual_num_bytes);
+    }
+    if (iface->out_xfer_done) {
+        xSemaphoreGive(iface->out_xfer_done);
+    }
 }
 
 /** Lock HID device from other task
@@ -1603,6 +1735,57 @@ esp_err_t hid_host_device_get_raw_input_report_data(hid_host_device_handle_t hid
     memcpy(data, iface->in_xfer->data_buffer, copied);
     *data_length = copied;
     return ESP_OK;
+}
+
+esp_err_t hid_host_device_send_report(hid_host_device_handle_t hid_dev_handle,
+                                       const uint8_t *data,
+                                       size_t data_length,
+                                       uint32_t timeout_ms)
+{
+    hid_iface_t *iface = get_iface_by_handle(hid_dev_handle);
+
+    HID_RETURN_ON_FALSE(iface, ESP_ERR_INVALID_ARG, "Invalid HID interface handle");
+    HID_RETURN_ON_FALSE(data, ESP_ERR_INVALID_ARG, "Invalid HID report data");
+    HID_RETURN_ON_FALSE(data_length > 0, ESP_ERR_INVALID_SIZE, "Empty HID report");
+    HID_RETURN_ON_FALSE(iface->out_xfer && iface->out_xfer_done,
+                        ESP_ERR_NOT_SUPPORTED,
+                        "HID interface has no interrupt OUT endpoint");
+    HID_RETURN_ON_FALSE(data_length <= iface->out_xfer->data_buffer_size,
+                        ESP_ERR_INVALID_SIZE,
+                        "HID report is larger than the OUT endpoint buffer");
+    HID_RETURN_ON_FALSE(iface->state == HID_INTERFACE_STATE_READY ||
+                        iface->state == HID_INTERFACE_STATE_ACTIVE,
+                        ESP_ERR_INVALID_STATE,
+                        "HID interface is not ready for output");
+
+    /* A prior completion should have been consumed by the caller, but drain
+     * the binary semaphore defensively before reusing the transfer object. */
+    while (xSemaphoreTake(iface->out_xfer_done, 0) == pdTRUE) {
+    }
+
+    memcpy(iface->out_xfer->data_buffer, data, data_length);
+    iface->out_xfer->device_handle = iface->parent->dev_hdl;
+    iface->out_xfer->bEndpointAddress = iface->ep_out;
+    iface->out_xfer->timeout_ms = timeout_ms;
+    iface->out_xfer->num_bytes = (int)data_length;
+    iface->out_xfer->actual_num_bytes = 0;
+    iface->out_xfer->callback = out_xfer_done;
+    iface->out_xfer->context = iface;
+    iface->out_xfer_result = ESP_FAIL;
+
+    esp_err_t err = usb_host_transfer_submit(iface->out_xfer);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "HID OUT report submit failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    TickType_t wait_ticks = timeout_ms ? pdMS_TO_TICKS(timeout_ms) : portMAX_DELAY;
+    if (xSemaphoreTake(iface->out_xfer_done, wait_ticks) != pdTRUE) {
+        ESP_LOGW(TAG, "HID OUT report timed out after %lu ms",
+                 (unsigned long)timeout_ms);
+        return ESP_ERR_TIMEOUT;
+    }
+    return iface->out_xfer_result;
 }
 
 // ------------------------ USB HID Host driver API ----------------------------

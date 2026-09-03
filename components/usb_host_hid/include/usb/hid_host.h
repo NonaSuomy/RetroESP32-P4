@@ -197,6 +197,25 @@ esp_err_t hid_host_device_get_raw_input_report_data(hid_host_device_handle_t hid
                                                     size_t data_length_max,
                                                     size_t *data_length);
 
+/**
+ * @brief Send a raw HID output report through the interface's interrupt OUT endpoint.
+ *
+ * The caller must include the report ID as the first byte when the device's HID
+ * descriptor uses report IDs. This is intentionally a raw report API because
+ * several controllers (including the Switch Pro) use output reports that are
+ * not representable by a simple class-control SET_REPORT request.
+ *
+ * @param[in] hid_dev_handle HID interface handle
+ * @param[in] data           Raw report bytes, including report ID if required
+ * @param[in] data_length    Number of bytes to send
+ * @param[in] timeout_ms     Completion timeout in milliseconds
+ * @return ESP_OK when the interrupt OUT transfer completes
+ */
+esp_err_t hid_host_device_send_report(hid_host_device_handle_t hid_dev_handle,
+                                       const uint8_t *data,
+                                       size_t data_length,
+                                       uint32_t timeout_ms);
+
 // ------------------------ USB HID Host driver API ----------------------------
 
 /**

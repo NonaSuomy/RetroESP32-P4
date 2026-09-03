@@ -33,7 +33,7 @@ static i2c_master_bus_handle_t s_i2c_handle = NULL;
 static void init_i2c(void)
 {
     i2c_master_bus_config_t i2c_bus_conf = {
-        .i2c_port = I2C_NUM_1,
+        .i2c_port = I2C_NUM_0,
         .sda_io_num = (gpio_num_t)TP_I2C_SDA,
         .scl_io_num = (gpio_num_t)TP_I2C_SCL,
         .clk_source = I2C_CLK_SRC_DEFAULT,
@@ -89,7 +89,10 @@ void odroid_system_init(void)
 
     /* 6. Touch (GT911) */
     ESP_LOGI(TAG, "Initializing touch (GT911)...");
-    ESP_ERROR_CHECK(gt911_touch_init(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT));
+    esp_err_t touch_ret = gt911_touch_init(TP_I2C_SDA, TP_I2C_SCL, TP_RST, TP_INT);
+    if (touch_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Touch unavailable (0x%x); continuing without touch", touch_ret);
+    }
 
     /* 7. Clear physical LCD to black */
     st7701_lcd_fill_screen(0x0000);

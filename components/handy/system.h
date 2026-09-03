@@ -77,7 +77,9 @@
 #define HANDY_AUDIO_BUFFER_SIZE					(HANDY_AUDIO_SAMPLE_FREQ)
 #endif
 
+#ifndef HANDY_AUDIO_BUFFER_SIZE
 #define HANDY_AUDIO_BUFFER_SIZE                 (2756)
+#endif
 
 
 #define HANDY_FILETYPE_LNX		0

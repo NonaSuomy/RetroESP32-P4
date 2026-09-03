@@ -53,6 +53,7 @@ target_compile_options(${COMPONENT_LIB} PRIVATE -O3)
 
 # Suppress warnings in legacy C code
 target_compile_options(${COMPONENT_LIB} PRIVATE
+    -std=gnu17
     -Wno-error
     -Wno-unused-variable
     -Wno-unused-function
@@ -61,7 +62,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-implicit-function-declaration
     -Wno-int-conversion
     -Wno-incompatible-pointer-types
-    -Wno-pointer-sign
     -Wno-sign-compare
     -Wno-missing-braces
     -Wno-old-style-definition

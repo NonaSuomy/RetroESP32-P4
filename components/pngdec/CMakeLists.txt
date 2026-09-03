@@ -3,3 +3,8 @@ idf_component_register(
          "src/inffast.c" "src/inflate.c" "src/inftrees.c" "src/zutil.c"
     INCLUDE_DIRS "include" "src"
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error=old-style-definition
+    -Wno-error=implicit-fallthrough
+)
