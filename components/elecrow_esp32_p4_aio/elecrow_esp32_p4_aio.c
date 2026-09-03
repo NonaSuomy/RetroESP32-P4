@@ -20,15 +20,16 @@ void elecrow_esp32_p4_aio_init(void)
     gpio_config_t touch = {
         .pin_bit_mask = 1ULL << 2,
         .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&touch));
 
-    /* The TTP223 drives OUT actively; leave GPIO2 floating rather than
-     * biasing it against the sensor. The first stable sample below learns
-     * the released level so either board polarity is handled. */
+    /* Match the board's ESPHome reference configuration. The pull-up gives
+     * a defined idle state if the TTP223 output is open-drain or disconnected.
+     * The first stable sample below learns the released level so either board
+     * polarity is handled. */
     s_touch_idle_level = -1;
     s_touch_candidate_level = -1;
     s_touch_candidate_count = 0;
