@@ -10,8 +10,10 @@ enum { INPUT_UP = 0, INPUT_RIGHT, INPUT_DOWN, INPUT_LEFT,
        INPUT_SELECT, INPUT_START, INPUT_A };
 static adc_oneshot_unit_handle_t s_adc = NULL;
 static int s_last_region = -1;
-static int s_touch_last = 0;
-static bool s_touch_seen_low = false;
+static int s_touch_idle_level = -1;
+static int s_touch_candidate_level = -1;
+static int s_touch_candidate_count = 0;
+static bool s_touch_active = false;
 
 void elecrow_esp32_p4_aio_init(void)
 {
@@ -19,10 +21,18 @@ void elecrow_esp32_p4_aio_init(void)
         .pin_bit_mask = 1ULL << 2,
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&touch));
+
+    /* The TTP223 drives OUT actively; leave GPIO2 floating rather than
+     * biasing it against the sensor. The first stable sample below learns
+     * the released level so either board polarity is handled. */
+    s_touch_idle_level = -1;
+    s_touch_candidate_level = -1;
+    s_touch_candidate_count = 0;
+    s_touch_active = false;
 
     adc_oneshot_unit_init_cfg_t unit_cfg = { .unit_id = ADC_UNIT_1 };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_cfg, &s_adc));
@@ -73,19 +83,36 @@ void elecrow_esp32_p4_aio_read(int *values, int value_count)
         else if (adc < 3287) values[INPUT_UP] = 1;
     }
 
-    /* GPIO2 is the active-high TTP223 output. Some boards power up with the
-     * line high, so ignore that initial state until we have observed an
-     * actual released (low) state. Only the rising edge is a button press;
-     * treating the falling edge as A caused a phantom press on release. */
+    /* GPIO2 is the TTP223 OUT line. Learn its released level instead of
+     * assuming active-high: the board's output/pull configuration can leave
+     * the line high or low at startup. Require three equal samples before
+     * changing state, then report A as a level so a held touch works in games
+     * as well as a short touch works in the carousel. */
     int touch = gpio_get_level(2);
-    if (!s_touch_seen_low) {
-        if (!touch) s_touch_seen_low = true;
-        s_touch_last = touch;
-    } else if (touch && !s_touch_last) {
-        values[INPUT_A] = 1;
-        ESP_LOGI(TAG, "touch event gpio2=%d", touch);
-        s_touch_last = touch;
+    if (s_touch_idle_level < 0) {
+        s_touch_idle_level = touch;
+        s_touch_candidate_level = touch;
+        s_touch_candidate_count = 0;
+        ESP_LOGI(TAG, "touch baseline gpio2=%d (released level learned)", touch);
     } else {
-        s_touch_last = touch;
+        if (touch != s_touch_candidate_level) {
+            s_touch_candidate_level = touch;
+            s_touch_candidate_count = 1;
+        } else if (s_touch_candidate_count < 3) {
+            s_touch_candidate_count++;
+        }
+
+        if (s_touch_candidate_count >= 3) {
+            bool active = (s_touch_candidate_level != s_touch_idle_level);
+            if (active != s_touch_active) {
+                s_touch_active = active;
+                ESP_LOGI(TAG, "touch %s gpio2=%d baseline=%d -> A=%d",
+                         active ? "pressed" : "released",
+                         s_touch_candidate_level, s_touch_idle_level,
+                         active ? 1 : 0);
+            }
+        }
     }
+
+    if (s_touch_active) values[INPUT_A] = 1;
 }

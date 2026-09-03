@@ -97,7 +97,6 @@ IRAM_ATTR void audio_cb( void *user_data, unsigned char *sdl_buffer, int howmuch
 	static long ct = 0;
 
 	SAMPLE_TYPE *feedme = (SAMPLE_TYPE *)sdl_buffer;
-	music_disabled = true;
 	if (!music_disabled && !music_stopped)
 	{
 		/* SYN: Simulate the fm synth chip */
@@ -290,4 +289,3 @@ void JE_multiSamplePlay(JE_byte *buffer, JE_word size, JE_byte chan, JE_byte vol
 
 	SDL_UnlockAudio();
 }
-
