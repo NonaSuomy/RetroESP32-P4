@@ -130,6 +130,12 @@ static void soundTask(void *arg)
         bool haveMusic = snd_MusicVolume > 0 && musicPlaying;
         bool haveSFX = snd_SfxVolume > 0 && I_AnySoundStillPlaying();
 
+        /* The buffer is reused every tick. Clear it before either mixer runs;
+         * otherwise a sound-effects-only tick inherits the previous music
+         * block, which produces the rattly/metallic tail heard after music
+         * changes or stops. */
+        __builtin_memset(mixbuffer, 0, sizeof(mixbuffer));
+
         if (haveMusic) {
             music_player->render(mixbuffer, AUDIO_BUFFER_LENGTH);
         }
@@ -174,10 +180,6 @@ static void soundTask(void *arg)
                 *audioBuffer++ = totalSample;
                 *audioBuffer++ = totalSample;
             }
-        }
-
-        if (!haveMusic && !haveSFX) {
-            __builtin_memset(mixbuffer, 0, sizeof(mixbuffer));
         }
 
         /* Submit stereo frames to launcher audio */

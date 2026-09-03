@@ -33,6 +33,11 @@ $CFLAGS = @(
     "-DIRAM_ATTR=",
     "-DRETRO_GO=1",
     "-DHAVE_CONFIG_H=1",
+    # PrBoom's cheat table intentionally uses K&R empty parameter lists;
+    # gnu17 treats those declarations as void(void), causing false type
+    # conflicts with the old-style definitions below. gnu99 retains the
+    # permissive declaration behavior while allowing C99 loop declarations.
+    "-std=gnu99",
     "-Os",
     "-fno-common",
     "-ffunction-sections",

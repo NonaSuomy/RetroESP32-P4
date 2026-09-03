@@ -26,7 +26,12 @@
 
 #define SFX_CHANNELS 8
 
-#if defined(TARGET_GP2X) || defined(TARGET_DINGUX)
+#if defined(PAPP_APP_SIDE)
+/* OPL synthesis at 44.1 kHz overruns the P4 PAPP audio producer often enough
+ * to make Tyrian music crackle. 22.05 kHz is the established handheld mode
+ * and keeps the mixer comfortably ahead of the I2S consumer. */
+#define OUTPUT_QUALITY 2
+#elif defined(TARGET_GP2X) || defined(TARGET_DINGUX)
 #define OUTPUT_QUALITY 2  // 22 kHz
 #else
 #define OUTPUT_QUALITY 4  // 44 kHz
@@ -56,4 +61,3 @@ void set_volume( unsigned int music, unsigned int sample );
 void JE_multiSamplePlay(JE_byte *buffer, JE_word size, JE_byte chan, JE_byte vol);
 
 #endif /* LOUDNESS_H */
-

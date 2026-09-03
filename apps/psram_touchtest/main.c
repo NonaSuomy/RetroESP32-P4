@@ -2,7 +2,7 @@
  * PAPP Touch Test — verify the touch_read service and its coordinate mapping.
  *
  * Draws four colored corner markers (to confirm canvas orientation) and a
- * white crosshair wherever you touch. touch_read reports LANDSCAPE
+ * white crosshair wherever you touch. touch_read reports 180-degree-corrected LANDSCAPE
  * native-framebuffer space (x:0..799, y:0..479); this app draws into a
  * 400x240 canvas scaled x2.0 -> 480x800, so canvas = touch / 2.
  *

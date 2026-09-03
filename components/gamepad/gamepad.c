@@ -59,6 +59,9 @@ static uint8_t s_raw_dump_buf[64];             /* buffer for deferred raw hex du
 static volatile int s_raw_dump_len = 0;
 static volatile uint32_t s_keyboard_log_pending = 0;
 static volatile uint32_t s_keyboard_log_mask = 0;
+/* Official wired Switch Pro pads can enumerate successfully while ignoring
+ * the first activation sequence when they were already connected at boot. */
+static volatile bool s_switch_report_seen = false;
 
 /* ========================= Device Identity ========================= */
 static uint16_t s_vid = 0;
@@ -256,6 +259,7 @@ static void parse_gamepad_report(const uint8_t *data, int len)
 		 * Buttons are a 24-bit little-endian mask; sticks are packed 12-bit.
 		 */
 		if (len < 13 || data[0] != 0x30) return;
+		s_switch_report_seen = true;
 		{
 			uint32_t b = (uint32_t)data[3] | ((uint32_t)data[4] << 8) |
 			             ((uint32_t)data[5] << 16);
@@ -782,8 +786,9 @@ static void gamepad_task(void *arg)
                  * the disconnect callback classify an early teardown safely. */
                 bool is_gamepad = (params.proto != HID_PROTOCOL_KEYBOARD &&
                                    params.proto != HID_PROTOCOL_MOUSE);
-                if (is_gamepad) {
-                    s_gamepad_handle = evt.hid_handle;
+				if (is_gamepad) {
+					s_gamepad_handle = evt.hid_handle;
+					s_switch_report_seen = false;
                     xSemaphoreTake(s_mutex, portMAX_DELAY);
                     s_state.connected = 1;
                     xSemaphoreGive(s_mutex);
@@ -837,7 +842,21 @@ static void gamepad_task(void *arg)
                 }
 				if (s_vid == 0x057E && s_pid == 0x2009) {
 					ESP_LOGI(TAG, "Switch Pro detected (057E:2009) — initializing USB HID transport");
-					switch_pro_enable(evt.hid_handle);
+					/* A cold-boot-connected Pro controller may still be waking its
+					 * USB MCU when the first sequence is sent. Repeat the complete
+					 * activation sequence until a real 0x30 input report arrives. */
+					for (int attempt = 1; attempt <= 3; ++attempt) {
+						switch_pro_enable(evt.hid_handle);
+						vTaskDelay(pdMS_TO_TICKS(150));
+						if (s_switch_report_seen) {
+							ESP_LOGI(TAG, "Switch Pro input report active after handshake attempt %d", attempt);
+							break;
+						}
+						ESP_LOGW(TAG, "Switch Pro sent no 0x30 input report after handshake attempt %d", attempt);
+					}
+					if (!s_switch_report_seen) {
+						ESP_LOGW(TAG, "Switch Pro transport initialized but input is still silent; retry by reconnecting controller");
+					}
 				}
 
                 /* Mark connected for gamepad devices */
@@ -869,6 +888,7 @@ esp_err_t gamepad_init(const gamepad_config_t *config)
     s_format_log_pending = 0;
     s_raw_dump_count = 0;
     s_raw_dump_len = 0;
+    s_switch_report_seen = false;
 
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return ESP_ERR_NO_MEM;

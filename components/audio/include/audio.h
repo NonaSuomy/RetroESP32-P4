@@ -85,7 +85,8 @@ esp_err_t audio_set_volume(int volume);
 esp_err_t audio_set_sample_rate(int sample_rate);
 
 /**
- * @brief Reset cached sample rate so next set_sample_rate forces reconfiguration.
+ * @brief Release logical sample-rate ownership while retaining the known hardware rate.
+ * The next set_sample_rate call verifies and reconfigures the I2S clock if needed.
  * Call after draining DMA (e.g. via audio_play_pcm with silence).
  */
 void audio_reset_sample_rate(void);

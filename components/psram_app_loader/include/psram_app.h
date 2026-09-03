@@ -162,10 +162,11 @@ typedef struct {
      * ──────────────────────────────────────────────────────────────── */
 
     /* ── Touch (GT911) ───────────────────────────────────────────────── */
-    /* Read the capacitive touch panel. Coordinates are reported in
-     * LANDSCAPE native-framebuffer space — x in [0,799], y in [0,479],
-     * matching display_get_framebuffer(). Returns 1 if currently touched
-     * (and fills *x,*y), 0 if not. Either pointer may be NULL. */
+    /* Read the capacitive touch panel. Coordinates are reported in the
+     * LANDSCAPE native-framebuffer space after the panel's 180-degree display
+     * transform — x in [0,799], y in [0,479], matching a full PAPP canvas.
+     * Returns 1 if currently touched (and fills *x,*y), 0 if not. Either
+     * pointer may be NULL. */
     int (*touch_read)(int *x, int *y);
 
     /* ── Analog paddle / wheel (ADC2_CH2, GPIO 51) ───────────────────── */

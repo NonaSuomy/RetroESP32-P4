@@ -20,7 +20,8 @@
  *  4x less pixel work than native, which keeps LVGL's software renderer smooth.
  *
  *  ── Touch coordinate mapping ───────────────────────────────────────────────
- *  svc->touch_read() reports LANDSCAPE NATIVE coordinates (x:0..799, y:0..479).
+ *  svc->touch_read() reports 180-degree-corrected LANDSCAPE NATIVE coordinates
+ *  (x:0..799, y:0..479).
  *  Our canvas is half that in each axis, so canvas = native / 2.
  *
  *  ── Exiting ────────────────────────────────────────────────────────────────

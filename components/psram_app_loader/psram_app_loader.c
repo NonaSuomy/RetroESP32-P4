@@ -346,17 +346,19 @@ static int svc_fb_copy(const uint16_t *src, uint16_t *dst,
 }
 
 /* Read the GT911 touch panel, reporting coordinates in the unrotated
- * 800x480 emulator framebuffer space. The display pipeline rotates emulator
- * frames 180° before sending them to the physical landscape LCD, so use the
- * same inverse transform as the launcher and the shared game touch mapper. */
+ * 800x480 PAPP framebuffer space. PAPPs use the fixed full-landscape canvas
+ * and the display pipeline rotates that canvas 180° before sending it to the
+ * physical LCD. Use the fixed UI transform here instead of the mutable native
+ * emulator layout: a PAPP can receive touch before its first frame has set a
+ * game layout, and touchtest/LVGL must share exactly the launcher's mapping. */
 static int svc_touch_read(int *x, int *y)
 {
     uint16_t tx = 0, ty = 0;
     if (!gt911_touch_get_xy(&tx, &ty)) return 0;
-    int game_x = -1, game_y = -1;
-    if (!odroid_display_touch_to_game(tx, ty, &game_x, &game_y)) return 0;
-    if (x) *x = game_x;
-    if (y) *y = game_y;
+    int ui_x = -1, ui_y = -1;
+    if (!odroid_display_touch_to_ui(tx, ty, &ui_x, &ui_y)) return 0;
+    if (x) *x = ui_x;
+    if (y) *y = ui_y;
     return 1;
 }
 

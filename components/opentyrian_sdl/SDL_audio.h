@@ -8,7 +8,11 @@
 
 // Needed for calling the actual sound output.
 #define SAMPLECOUNT		2048
-#define SAMPLERATE		11025 * 4 // Hz
+#if defined(PAPP_APP_SIDE)
+#define SAMPLERATE		(11025 * 2) // Hz; matches PAPP OpenTyrian OUTPUT_QUALITY
+#else
+#define SAMPLERATE		(11025 * 4) // Hz
+#endif
 #define SAMPLESIZE		2   	// 16bit
 
 typedef struct{

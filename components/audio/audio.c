@@ -38,6 +38,11 @@ static esp_codec_dev_handle_t s_codec_handle = NULL;
 /* Current config */
 static audio_config_t s_config;
 static bool s_initialized = false;
+/* s_config.sample_rate is intentionally invalidated between PSRAM apps so a
+ * new app does not inherit the previous app's logical ownership. Keep the
+ * actual peripheral clock separately so the next app can still determine
+ * whether a hardware reconfiguration is required. */
+static int s_hw_sample_rate = 0;
 /* The Elecrow board has an NS4168 I2S amplifier, not an ES8311 codec.
  * GPIO6 drives a P-channel MOSFET, so the amplifier power gate is active-low. */
 static bool s_raw_i2s = false;
@@ -188,6 +193,7 @@ esp_err_t audio_init(const audio_config_t *config)
 
     /* 1. Initialize I2S driver */
     ESP_RETURN_ON_ERROR(i2s_driver_init(config), TAG, "I2S init failed");
+    s_hw_sample_rate = config->sample_rate;
 
     /* 2. The Elecrow NS4168 is a raw I2S amplifier controlled by a GPIO. */
     s_raw_i2s = (config->mclk_io < 0);
@@ -308,51 +314,69 @@ esp_err_t audio_set_volume(int volume)
 esp_err_t audio_set_sample_rate(int sample_rate)
 {
     if (!s_initialized || !s_tx_handle) return ESP_ERR_INVALID_STATE;
+    if (sample_rate <= 0) return ESP_ERR_INVALID_ARG;
     if (sample_rate == s_config.sample_rate) return ESP_OK;  /* no change */
 
-    /* If the cached rate was reset to 0 (by audio_reset_sample_rate after
-     * a PSRAM app exit), just update the cached value without touching I2S.
-     * The I2S channel is still running at its configured hardware rate;
-     * the next app's audio_submit calls will work regardless. */
-    if (s_config.sample_rate == 0) {
+    /* After an app exits, the logical rate is 0 but the I2S peripheral is
+     * still clocked at s_hw_sample_rate. Reuse that hardware state only when
+     * it already matches the new app; otherwise really reprogram the clock. */
+    if (s_config.sample_rate == 0 && sample_rate == s_hw_sample_rate) {
         s_config.sample_rate = sample_rate;
-        ESP_LOGI(TAG, "I2S sample rate cached as %d Hz (no reconfig)", sample_rate);
+        ESP_LOGI(TAG, "I2S sample rate confirmed at %d Hz (no reconfig needed)", sample_rate);
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Reconfiguring I2S sample rate: %d -> %d", s_config.sample_rate, sample_rate);
+    int old_rate = (s_config.sample_rate > 0) ? s_config.sample_rate : s_hw_sample_rate;
+    ESP_LOGI(TAG, "Reconfiguring I2S sample rate: %d -> %d", old_rate, sample_rate);
 
     /* Disable TX channel, reconfigure clocks, re-enable */
-    i2s_channel_disable(s_tx_handle);
+    esp_err_t ret = i2s_channel_disable(s_tx_handle);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to disable I2S channel: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     i2s_std_clk_config_t clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate);
     clk_cfg.mclk_multiple = (i2s_mclk_multiple_t)MCLK_MULTIPLE;
-    esp_err_t ret = i2s_channel_reconfig_std_clock(s_tx_handle, &clk_cfg);
+    ret = i2s_channel_reconfig_std_clock(s_tx_handle, &clk_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to reconfigure I2S clock: %s", esp_err_to_name(ret));
         i2s_channel_enable(s_tx_handle);  /* try to restore */
         return ret;
     }
 
-    i2s_channel_enable(s_tx_handle);
+    ret = i2s_channel_enable(s_tx_handle);
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to re-enable I2S channel: %s", esp_err_to_name(ret));
+        return ret;
+    }
     s_config.sample_rate = sample_rate;
+    s_hw_sample_rate = sample_rate;
     ESP_LOGI(TAG, "I2S sample rate set to %d Hz", sample_rate);
     return ESP_OK;
 }
 
 void audio_reset_sample_rate(void)
 {
-    /* Reset cached sample rate to 0 so next audio_set_sample_rate()
-     * forces a full reconfiguration via disable/reconfig/enable.
-     * Call this AFTER draining DMA (e.g. audio_submit_zero) so the
-     * next i2s_channel_disable won't hang on pending transfers. */
+    /* Invalidate the logical owner while retaining the actual peripheral rate.
+     * The next audio_set_sample_rate() compares against s_hw_sample_rate and
+     * performs a real disable/reconfigure/enable when the new app differs. */
     s_config.sample_rate = 0;
+    ESP_LOGI(TAG, "I2S sample rate ownership reset (hardware remains %d Hz)",
+             s_hw_sample_rate);
 }
 
 esp_err_t audio_play_pcm(const void *data, size_t len, int sample_rate)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
+
+    /* Keep the data rate and peripheral clock coupled even for callers that
+     * submit PCM directly instead of calling audio_set_sample_rate first. */
+    if (sample_rate > 0 && sample_rate != s_hw_sample_rate) {
+        esp_err_t rate_ret = audio_set_sample_rate(sample_rate);
+        if (rate_ret != ESP_OK) return rate_ret;
+    }
 
     if (s_pcm_log_count++ < 3) {
         const int16_t *samples = (const int16_t *)data;

@@ -60,8 +60,17 @@ def upload(port, baud, filepath, dest):
     print(f"Dest:  {dest}")
     print(f"Port:  {port}")
 
-    ser = serial.Serial(port, baud, timeout=1)
-    time.sleep(0.1)
+    # Open without toggling DTR/RTS.  On ESP32 USB Serial JTAG those control
+    # lines can reset the board, which races the launcher before its upload
+    # task is listening and makes an otherwise valid upload time out.
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baud
+    ser.timeout = 1
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    time.sleep(0.5)
 
     # Flush any pending data
     ser.reset_input_buffer()
