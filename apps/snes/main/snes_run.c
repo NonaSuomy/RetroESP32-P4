@@ -41,7 +41,6 @@
 #include "odroid_system.h"
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
-#include "st7701_lcd.h"
 
 static const char *TAG = "SNES_RUN";
 
@@ -64,9 +63,6 @@ static volatile bool snes_quit_flag = false;
 static volatile bool snes_audio_resync = false;  /* signal audio task to reset time base */
 static volatile bool videoTaskRunning = false;
 static volatile bool audioTaskRunning = false;
-
-/* Forward declarations */
-static void snes_blit_sidebar_buttons(void);
 
 static uint16_t *snes_fb[2] = { NULL, NULL };  /* double-buffer for SNES output */
 static uint8_t  *snes_subscreen = NULL;         /* dedicated SubScreen buffer */
@@ -193,8 +189,6 @@ static void snes_video_task(void *arg)
 {
     uint16_t *frame = NULL;
     videoTaskRunning = true;
-    int sidebar_countdown = 2;  /* blit sidebar on first 2 frames, then stop */
-    (void)sidebar_countdown;
 
     while (1) {
         xQueuePeek(vidQueue, &frame, portMAX_DELAY);
@@ -207,14 +201,6 @@ static void snes_video_task(void *arg)
         /* Direct 2× scale + 180° rotate — no 320×240 staging buffer */
         ili9341_write_frame_rgb565_custom(frame, SNES_FB_W, SNES_FB_H,
                                            2.0f, false);
-
-        /* Draw sidebar buttons once after the first frame clears borders */
-#ifndef CONFIG_HDMI_OUTPUT
-        if (sidebar_countdown > 0) {
-            snes_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-#endif
 
         xQueueReceive(vidQueue, &frame, portMAX_DELAY);
     }
@@ -693,103 +679,6 @@ static bool snes_show_menu(void)
     }
 }
 
-/* ─── Landscape sidebar button labels ─────────────────────────── */
-/*
- * SNES frames are 512×448 and centered at physical LCD coordinates
- * x=256..767, y=76..523. Keep the MENU/VOL labels in the real landscape
- * side bars; the old implementation used the board's former 480×800
- * portrait coordinates and was drawn partly off-panel.
- */
-
-/* Persistent sidebar button buffers — allocated once, reused every frame */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } s_sidebar_btns[] = {
-    { "MENU",  72, 280, 96, 40 },         /* left landscape sidebar */
-    { "VOL",  856, 280, 96, 40 },         /* right landscape sidebar */
-};
-
-static void snes_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = s_sidebar_btns[b].pw, ph = s_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-
-        /* Background fill */
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
-        }
-
-        /* Render upright text reading left-to-right in landscape. */
-        const char *s = s_sidebar_btns[b].text;
-        int nch = 0;
-        for (const char *p = s; *p; p++) nch++;
-        int txt_pw = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - CH) / 2;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_x = ox + ci * (CW + GAP);
-
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = char_x + fc * SC + sc;
-                                int by = oy + fr * SC + sr;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-
-        ESP_LOGI(TAG, "Sidebar btn[%d] '%s' rendered, landscape (%d,%d) %dx%d",
-                 b, s_sidebar_btns[b].text, s_sidebar_btns[b].px, s_sidebar_btns[b].py, pw, ph);
-    }
-}
-
-/* Blit pre-rendered sidebar buttons to LCD (called from video task AFTER each game frame).
- * Uses direct CPU memcpy to the DPI framebuffer, bypassing the async DMA2D
- * pipeline to avoid contention with the game-frame draw_bitmap (which holds
- * a non-blocking semaphore while its DMA transfer is in-flight). */
-static void snes_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)s_sidebar_btns[b].px, (uint16_t)s_sidebar_btns[b].py,
-            (uint16_t)s_sidebar_btns[b].pw, (uint16_t)s_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
-    }
-}
-
 /* ─── Main emulation logic ──────────────────────────────────────── */
 
 static void snes_init_core(void)
@@ -1007,11 +896,6 @@ void snes_run(const char *rom_path)
 
     /* ── Initialize audio ── */
     odroid_audio_init(AUDIO_SAMPLE_RATE);
-
-    /* ── Pre-render sidebar button bitmaps ── */
-#ifndef CONFIG_HDMI_OUTPUT
-    snes_init_sidebar_buttons();
-#endif
 
     /* SNES has native X/Y face buttons — don't alias them to Menu/Volume */
     odroid_input_xy_menu_disable = true;

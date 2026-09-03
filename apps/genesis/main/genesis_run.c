@@ -37,7 +37,6 @@
 #include "odroid_system.h"
 #include "odroid_display.h"
 #include "odroid_sdcard.h"
-#include "st7701_lcd.h"
 
 static const char *TAG = "GENESIS_RUN";
 
@@ -53,7 +52,6 @@ static const char *TAG = "GENESIS_RUN";
 #define GWENESIS_AUDIO_ACCURATE 0
 #endif
 
-static void genesis_blit_sidebar_buttons(void);
 #define TARGET_FPS        60
 #define GEN_MAX_FRAMESKIP 3   /* max consecutive render-skips to hold 60 FPS game speed */
 
@@ -298,7 +296,6 @@ static void genesis_video_task(void *arg)
 {
     uint8_t *frame = NULL;
     videoTaskRunning = true;
-    int sidebar_countdown = 2;
 
     ESP_LOGI(TAG, "Video task started on core %d", xPortGetCoreID());
 
@@ -320,14 +317,6 @@ static void genesis_video_task(void *arg)
             /* H40 mode: 320×224 — scale 2× + rotate via PPA */
             ili9341_write_frame_rgb565_custom(gen_rgb565, 320, h, 2.0f, false);
         }
-
-        /* Draw sidebar buttons on first frames */
-#ifndef CONFIG_HDMI_OUTPUT
-        if (sidebar_countdown > 0) {
-            genesis_blit_sidebar_buttons();
-            sidebar_countdown--;
-        }
-#endif
 
         xQueueReceive(vidQueue, &frame, portMAX_DELAY);
     }
@@ -704,88 +693,6 @@ static bool genesis_show_menu(void)
     }
 }
 
-/* ─── Sidebar button labels ───────────────────────────────────── */
-static uint16_t *s_sidebar_buf[2] = { NULL, NULL };
-static const struct { const char *text; int px, py, pw, ph; } s_sidebar_btns[] = {
-    { "MENU", 200, 2,   80, 76 },   /* left sidebar: portrait y 0-79 (80px for 640-wide output) */
-    { "VOL",  200, 722, 80, 76 },   /* right sidebar: portrait y 720-799 */
-};
-
-static void genesis_init_sidebar_buttons(void)
-{
-    enum { SC = 3 };
-    enum { CW = 5 * SC, CH = 5 * SC, GAP = SC };
-    const uint16_t COL_BG  = 0x18E3;
-    const uint16_t COL_BRD = 0x6B4D;
-    const uint16_t COL_TXT = 0xFFFF;
-
-    for (int b = 0; b < 2; b++) {
-        const int pw = s_sidebar_btns[b].pw, ph = s_sidebar_btns[b].ph;
-
-        s_sidebar_buf[b] = (uint16_t *)heap_caps_aligned_calloc(
-            64, pw * ph, sizeof(uint16_t),
-            MALLOC_CAP_SPIRAM | MALLOC_CAP_DMA);
-        if (!s_sidebar_buf[b]) { ESP_LOGE(TAG, "Sidebar buf alloc failed b=%d", b); continue; }
-
-        uint16_t *buf = s_sidebar_buf[b];
-
-        for (int i = 0; i < pw * ph; i++) buf[i] = COL_BG;
-
-        /* 2-pixel border */
-        for (int t = 0; t < 2; t++) {
-            for (int x = 0; x < pw; x++) {
-                buf[t * pw + x] = COL_BRD;
-                buf[(ph - 1 - t) * pw + x] = COL_BRD;
-            }
-            for (int y = 0; y < ph; y++) {
-                buf[y * pw + t] = COL_BRD;
-                buf[y * pw + pw - 1 - t] = COL_BRD;
-            }
-        }
-
-        /* Render upright text */
-        const char *s = s_sidebar_btns[b].text;
-        int nch = strlen(s);
-        int txt_pw = CH;
-        int txt_ph = nch * (CW + GAP) - GAP;
-        int ox = (pw - txt_pw) / 2;
-        int oy = (ph - txt_ph) / 2;
-        int glyph_top_x = ox + txt_pw - 1;
-
-        for (int ci = 0; ci < nch; ci++) {
-            int idx = -1;
-            char ch = s[ci];
-            if (ch >= 'A' && ch <= 'Z') idx = ch - 'A';
-            else if (ch >= 'a' && ch <= 'z') idx = ch - 'a';
-            if (idx < 0) continue;
-
-            int char_by = oy + ci * (CW + GAP);
-
-            for (int fr = 0; fr < 5; fr++)
-                for (int fc = 0; fc < 5; fc++)
-                    if (font5x5[idx][fr] & (0x10 >> fc))
-                        for (int sr = 0; sr < SC; sr++)
-                            for (int sc = 0; sc < SC; sc++) {
-                                int bx = glyph_top_x - (fr * SC + sr);
-                                int by = char_by + fc * SC + sc;
-                                if (bx >= 0 && bx < pw && by >= 0 && by < ph)
-                                    buf[by * pw + bx] = COL_TXT;
-                            }
-        }
-    }
-}
-
-static void genesis_blit_sidebar_buttons(void)
-{
-    for (int b = 0; b < 2; b++) {
-        if (!s_sidebar_buf[b]) continue;
-        st7701_lcd_draw_to_fb(
-            (uint16_t)s_sidebar_btns[b].px, (uint16_t)s_sidebar_btns[b].py,
-            (uint16_t)s_sidebar_btns[b].pw, (uint16_t)s_sidebar_btns[b].ph,
-            s_sidebar_buf[b]);
-    }
-}
-
 /* ─── Memory allocation (replaces shared_memory / box-emu) ──────── */
 static void genesis_alloc_core(void)
 {
@@ -993,11 +900,6 @@ void genesis_run(const char *rom_path)
     odroid_audio_init(gen_i2s_rate);
     ESP_LOGI(TAG, "Audio: synth=%d Hz, I2S=%d Hz (2:1 downsample)",
              REG1_PAL ? GWENESIS_AUDIO_FREQ_PAL : GWENESIS_AUDIO_FREQ_NTSC, gen_i2s_rate);
-
-    /* ── Pre-render sidebar buttons ── */
-#ifndef CONFIG_HDMI_OUTPUT
-    genesis_init_sidebar_buttons();
-#endif
 
     /* Genesis 3-button pad needs X/Y as face buttons (A/C).
      * MENU and VOLUME are handled by the touchscreen shoulder zones. */
@@ -1275,9 +1177,6 @@ cleanup:
     if (gen_rgb565) { heap_caps_free(gen_rgb565); gen_rgb565 = NULL; }
     for (int i = 0; i < AUD_QUEUE_DEPTH; i++) {
         if (audio_dma_buf[i]) { heap_caps_free(audio_dma_buf[i]); audio_dma_buf[i] = NULL; }
-    }
-    for (int b = 0; b < 2; b++) {
-        if (s_sidebar_buf[b]) { heap_caps_free(s_sidebar_buf[b]); s_sidebar_buf[b] = NULL; }
     }
     if (ROM_DATA) { heap_caps_free(ROM_DATA); ROM_DATA = NULL; }
 
