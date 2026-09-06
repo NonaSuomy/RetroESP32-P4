@@ -9,6 +9,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import math
 import socket
 import struct
 import subprocess
@@ -106,6 +107,12 @@ def main() -> None:
             video_size = video_image.size
             video_frames.append(video_image.tobytes())
             frames += 1
+    # Some PAPPs redraw only when their contents change. Preserve the requested
+    # real-time duration by holding the most recent valid frame during gaps.
+    target_frames = max(frames, math.ceil(args.duration * 5.0))
+    if video_frames:
+        video_frames.extend([video_frames[-1]] * (target_frames - frames))
+        frames = target_frames
     if args.output is not None and video_frames:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="papp-record-") as temp_dir:
@@ -119,7 +126,10 @@ def main() -> None:
                     wav.setnchannels(2)
                     wav.setsampwidth(2)
                     wav.setframerate(audio_rate)
-                    wav.writeframes(audio)
+                    target_audio_bytes = int(args.duration * audio_rate) * 2 * 2
+                    if len(audio) < target_audio_bytes:
+                        audio.extend(b"\x00" * (target_audio_bytes - len(audio)))
+                    wav.writeframes(audio[:target_audio_bytes])
                 command += ["-i", str(audio_wav), "-c:v", "libx264", "-pix_fmt", "yuv420p",
                             "-c:a", "aac", "-map", "0:v:0", "-map", "1:a:0",
                             "-t", f"{max(frames / 5.0, 0.2):.3f}", str(args.output)]
