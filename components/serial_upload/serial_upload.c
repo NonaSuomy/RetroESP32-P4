@@ -18,10 +18,12 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <sys/stat.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/uart.h"
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
@@ -30,6 +32,10 @@
 
 static const char *TAG = "serial_upload";
 static TaskHandle_t s_upload_task = NULL;
+/* The Elecrow board exposes UART0 through the connected CH340 bridge as
+ * /dev/ttyUSB0.  Keep the USB Serial JTAG backend available, but prefer
+ * UART0 so the PAPU protocol works on the port physically connected here. */
+static bool s_uart_ready = false;
 
 #define MAGIC       "PAPU"
 #define MAGIC_LEN   4
@@ -40,6 +46,24 @@ static TaskHandle_t s_upload_task = NULL;
 
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 
+static int transport_read(uint8_t *buf, size_t len, TickType_t timeout)
+{
+    if (s_uart_ready) {
+        return uart_read_bytes(UART_NUM_0, buf, len, timeout);
+    }
+    return usb_serial_jtag_read_bytes(buf, len, timeout);
+}
+
+static int transport_write(const uint8_t *buf, size_t len, TickType_t timeout)
+{
+    if (s_uart_ready) {
+        int n = uart_write_bytes(UART_NUM_0, (const char *)buf, len);
+        uart_wait_tx_done(UART_NUM_0, timeout);
+        return n;
+    }
+    return usb_serial_jtag_write_bytes(buf, len, timeout);
+}
+
 /* Read exactly `len` bytes, return 0 on success, -1 on timeout. */
 static int read_exact(uint8_t *buf, size_t len, int timeout_ms)
 {
@@ -49,7 +73,7 @@ static int read_exact(uint8_t *buf, size_t len, int timeout_ms)
         TickType_t now = xTaskGetTickCount();
         if ((int32_t)(now - deadline) >= 0) return -1;
         TickType_t remaining = deadline - now;
-        int n = usb_serial_jtag_read_bytes(buf + got, len - got, remaining);
+        int n = transport_read(buf + got, len - got, remaining);
         if (n > 0) got += n;
     }
     return 0;
@@ -65,7 +89,7 @@ static int read_line(char *buf, size_t max, int timeout_ms)
         if ((int32_t)(now - deadline) >= 0) return -1;
         TickType_t remaining = deadline - now;
         uint8_t c;
-        int n = usb_serial_jtag_read_bytes(&c, 1, remaining);
+        int n = transport_read(&c, 1, remaining);
         if (n <= 0) continue;
         if (c == '\n') { buf[pos] = '\0'; return (int)pos; }
         if (c != '\r') buf[pos++] = (char)c;
@@ -78,8 +102,8 @@ static int read_line(char *buf, size_t max, int timeout_ms)
 static void send_response(const char *msg)
 {
     const char prefix = '\x06';
-    usb_serial_jtag_write_bytes(&prefix, 1, pdMS_TO_TICKS(100));
-    usb_serial_jtag_write_bytes(msg, strlen(msg), pdMS_TO_TICKS(1000));
+    transport_write((const uint8_t *)&prefix, 1, pdMS_TO_TICKS(100));
+    transport_write((const uint8_t *)msg, strlen(msg), pdMS_TO_TICKS(1000));
 }
 
 /* Recursively create directories for a given file path (like mkdir -p). */
@@ -180,7 +204,7 @@ static void handle_upload(void)
         written += to_read;
 
         /* Chunk ACK — tell PC to send next chunk */
-        usb_serial_jtag_write_bytes(&ack_byte, 1, pdMS_TO_TICKS(100));
+        transport_write((const uint8_t *)&ack_byte, 1, pdMS_TO_TICKS(100));
     }
 
     free(chunk);
@@ -279,7 +303,7 @@ static void handle_launch(void)
 
 static void serial_upload_task(void *arg)
 {
-    ESP_LOGI(TAG, "Listening on USB Serial JTAG (upload=PAPU, launch=RUNR)...");
+    ESP_LOGI(TAG, "Listening on UART0 + USB Serial JTAG (upload=PAPU, launch=RUNR)...");
 
     const uint8_t upload_magic[] = MAGIC;
     const uint8_t launch_magic[] = LAUNCH_MAGIC;
@@ -287,7 +311,7 @@ static void serial_upload_task(void *arg)
 
     for (;;) {
         uint8_t byte;
-        int n = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(500));
+        int n = transport_read(&byte, 1, pdMS_TO_TICKS(500));
         if (n <= 0) continue;
 
         /* Match upload magic "PAPU" */
@@ -320,6 +344,30 @@ static void serial_upload_task(void *arg)
 
 void serial_upload_init(void)
 {
+    /* Install a buffered UART0 driver for the CH340 console bridge.  The
+       ESP-IDF console uses ROM UART output, so this does not remove boot/app
+       logging; it adds buffered RX/TX for the PAPU file-transfer protocol. */
+    uart_config_t uart_cfg = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    esp_err_t uart_err = uart_param_config(UART_NUM_0, &uart_cfg);
+    if (uart_err == ESP_OK) {
+        uart_err = uart_driver_install(UART_NUM_0, 16384, 4096, 0, NULL, 0);
+    }
+    if (uart_err == ESP_OK || uart_err == ESP_ERR_INVALID_STATE) {
+        s_uart_ready = true;
+        ESP_LOGI(TAG, "UART0 upload transport enabled (115200 8N1)");
+    } else {
+        s_uart_ready = false;
+        ESP_LOGW(TAG, "UART0 upload transport unavailable: %s; using USB Serial JTAG",
+                 esp_err_to_name(uart_err));
+    }
+
     /* Install the USB Serial JTAG interrupt-driven driver with generous
        RX/TX buffers so file data doesn't get dropped. */
     usb_serial_jtag_driver_config_t cfg = {

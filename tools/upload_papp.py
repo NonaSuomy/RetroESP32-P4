@@ -52,6 +52,19 @@ def find_response(ser, timeout=10, initial_buf=b""):
     return None
 
 
+def wait_for_launcher(ser, timeout=20):
+    """Wait through a UART bridge reset until the native launcher is ready."""
+    deadline = time.time() + timeout
+    buf = b""
+    while time.time() < deadline:
+        chunk = ser.read(4096)
+        if chunk:
+            buf = (buf + chunk)[-8192:]
+            if b"Listening on UART0" in buf or b"Listening on USB Serial JTAG" in buf:
+                return True
+    return False
+
+
 def upload(port, baud, filepath, dest):
     file_size = os.path.getsize(filepath)
     filename = os.path.basename(filepath)
@@ -70,7 +83,14 @@ def upload(port, baud, filepath, dest):
     ser.dtr = False
     ser.rts = False
     ser.open()
-    time.sleep(0.5)
+
+    # Opening the CH340 console port toggles the board reset lines.  Wait for
+    # the launcher task after that reset before sending the PAPU header.
+    print("Waiting for launcher...", end=" ", flush=True)
+    if wait_for_launcher(ser):
+        print("ready.")
+    else:
+        print("timeout; sending anyway.")
 
     # Flush any pending data
     ser.reset_input_buffer()
