@@ -9,6 +9,11 @@
  *   PC → ESP:  <raw binary data>   (exactly <size> bytes)
  *   ESP → PC:  "\x06OK <size>\n"   (success) or "\x06ERR:<msg>\n" (failure)
  *
+ * Recovery command:
+ *   PC → ESP:  "STOP\n"             (stop a running PAPP and reboot
+ *                                        into the launcher)
+ *   ESP → PC:  "\x06STOPPING\n"
+ *
  * The \x06 prefix lets the PC-side script distinguish protocol responses
  * from interleaved ESP_LOG output.
  */
@@ -40,6 +45,7 @@ static bool s_uart_ready = false;
 #define MAGIC       "PAPU"
 #define MAGIC_LEN   4
 #define LAUNCH_MAGIC "RUNR"
+#define STOP_MAGIC   "STOP"
 #define CHUNK_SIZE  4096
 #define MAX_PATH    256
 #define MAX_FILE_SIZE (68 * 1024 * 1024)  /* 68 MB — large enough for Neo Geo sprite caches (up to 64 MB) */
@@ -313,6 +319,22 @@ static void handle_launch(void)
     /* Does not return */
 }
 
+/* ── Stop handler ──────────────────────────────────────────────────────
+ *
+ * PAPP execution is synchronous in the launcher task, so a generic clean
+ * return cannot be forced safely from this independent serial task.  A
+ * restart is the reliable recovery path: the queued RUNR action has already
+ * been cleared before a PAPP is entered, so the board comes back to the
+ * normal launcher instead of relaunching the app.
+ */
+static void handle_stop(void)
+{
+    ESP_LOGW(TAG, "STOP command received; rebooting to launcher");
+    send_response("STOPPING\n");
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_restart();
+}
+
 /* ── Background task ─────────────────────────────────────────────────── */
 
 static void serial_upload_task(void *arg)
@@ -321,7 +343,8 @@ static void serial_upload_task(void *arg)
 
     const uint8_t upload_magic[] = MAGIC;
     const uint8_t launch_magic[] = LAUNCH_MAGIC;
-    int u_idx = 0, l_idx = 0;
+    const uint8_t stop_magic[] = STOP_MAGIC;
+    int u_idx = 0, l_idx = 0, s_idx = 0;
 
     for (;;) {
         uint8_t byte;
@@ -333,7 +356,7 @@ static void serial_upload_task(void *arg)
             u_idx++;
             if (u_idx == MAGIC_LEN) {
                 handle_upload();
-                u_idx = 0; l_idx = 0;
+                u_idx = 0; l_idx = 0; s_idx = 0;
                 continue;
             }
         } else {
@@ -345,11 +368,27 @@ static void serial_upload_task(void *arg)
             l_idx++;
             if (l_idx == MAGIC_LEN) {
                 handle_launch();
-                u_idx = 0; l_idx = 0;
+                u_idx = 0; l_idx = 0; s_idx = 0;
                 continue;
             }
         } else {
             l_idx = (byte == launch_magic[0]) ? 1 : 0;
+        }
+
+        /* Match recovery command "STOP".  It is intentionally checked only
+         * while no PAPU/RUNR command is being consumed. */
+        if (byte == stop_magic[s_idx]) {
+            s_idx++;
+            if (s_idx == MAGIC_LEN) {
+                /* The command is line-oriented; consume the optional LF. */
+                uint8_t term;
+                (void)transport_read(&term, 1, pdMS_TO_TICKS(100));
+                handle_stop();
+                u_idx = 0; l_idx = 0; s_idx = 0;
+                continue;
+            }
+        } else {
+            s_idx = (byte == stop_magic[0]) ? 1 : 0;
         }
     }
 }
