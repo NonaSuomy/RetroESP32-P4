@@ -59,6 +59,37 @@
   struct dirent *file;
 //}#pragma endregion Global
 
+static void run_queued_papp(void)
+{
+  if (odroid_settings_StartAction_get() != ODROID_START_ACTION_PAPP) return;
+
+  char *path = odroid_settings_RomFilePath_get();
+  /* Clear the one-shot action before loading so a PAPP crash/reset does not
+     trap the launcher in an automatic relaunch loop. */
+  odroid_settings_StartAction_set(ODROID_START_ACTION_NORMAL);
+
+  if (!path || !path[0]) {
+    ESP_LOGE("launcher", "Queued PAPP launch has no path");
+    free(path);
+    return;
+  }
+
+  ESP_LOGI("launcher", "Serial PAPP launch: %s", path);
+  psram_app_handle_t papp = NULL;
+  esp_err_t err = psram_app_load(path, &papp);
+  if (err != ESP_OK) {
+    ESP_LOGE("launcher", "Queued PAPP load failed: %s", esp_err_to_name(err));
+    free(path);
+    return;
+  }
+
+  int result = psram_app_run(papp);
+  ESP_LOGI("launcher", "Queued PAPP returned: %d", result);
+  audio_reset_sample_rate();
+  psram_app_unload(papp);
+  free(path);
+}
+
 //{#pragma region Emulator and Directories
   char EMULATORS[COUNT][30] = {
     "SETTINGS (v3.1)",
@@ -207,6 +238,10 @@
 
     // Serial file upload (background task on USB Serial JTAG)
     serial_upload_init();
+
+    /* RUNR with a /sd/roms/papp/<file>.papp path sets this one-shot action so PAPPs can be
+       launched and diagnosed from the same serial connection as ROMs. */
+    run_queued_papp();
 
     // Count ROMs per system for carousel display
     count_all_roms();

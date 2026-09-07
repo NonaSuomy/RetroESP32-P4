@@ -19,7 +19,8 @@ char* odroid_util_GetFileNameWithoutExtension(const char* path);
 /* ─── Enumerations ────────────────────────────────────────────── */
 typedef enum {
     ODROID_START_ACTION_NORMAL = 0,
-    ODROID_START_ACTION_RESTART
+    ODROID_START_ACTION_RESTART,
+    ODROID_START_ACTION_PAPP
 } ODROID_START_ACTION;
 
 typedef enum {

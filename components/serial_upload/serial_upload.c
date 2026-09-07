@@ -261,6 +261,20 @@ static void handle_launch(void)
     }
     const char *ext = dot + 1;
 
+    /* PAPPs run from the factory launcher rather than an OTA emulator slot.
+       Queue the path in NVS and let the launcher execute it after reboot. */
+    if (strcasecmp(ext, "papp") == 0) {
+        odroid_settings_RomFilePath_set(rom_path);
+        odroid_settings_StartAction_set(ODROID_START_ACTION_PAPP);
+        char resp[MAX_PATH + 32];
+        snprintf(resp, sizeof(resp), "LAUNCH:%s\n", rom_path);
+        send_response(resp);
+        ESP_LOGI(TAG, "Launching PAPP: '%s'", rom_path);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        esp_restart();
+        return;
+    }
+
     int ota_slot = ext_to_ota_slot(ext);
     if (ota_slot < 0) {
         char resp[64];
