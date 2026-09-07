@@ -20,6 +20,7 @@ $OUT   = "$ROOT\firmware\quake.papp"
 
 # Compiler
 $CC  = "riscv32-esp-elf-gcc"
+$CXX = "riscv32-esp-elf-g++"
 $OBJ = "riscv32-esp-elf-objcopy"
 
 $ARCH_FLAGS = @(
@@ -29,6 +30,7 @@ $ARCH_FLAGS = @(
 )
 
 $CFLAGS = @(
+    "-std=gnu99",
     "-DPAPP_APP_SIDE=1",
     "-DIRAM_ATTR=",
     "-DESP32_QUAKE=1",
@@ -61,6 +63,23 @@ $CFLAGS = @(
     "-Wno-missing-braces",
     "-Wno-missing-field-initializers",
     "-Wno-trigraphs"
+)
+
+# The MP3 decoder is C++ source, but it is intentionally built without the
+# C++ runtime.  The decoder itself uses only the C ABI, fixed-point math, and
+# malloc/free supplied by the PAPP linker wrappers.
+$CXXFLAGS = @(
+    "-std=gnu++17",
+    "-fno-exceptions",
+    "-fno-rtti",
+    "-fno-use-cxa-atexit",
+    "-DPAPP_APP_SIDE=1",
+    "-Os",
+    "-ffunction-sections",
+    "-fdata-sections",
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+    "-Wno-sign-compare"
 )
 
 # Include paths — compat headers FIRST to override ESP-IDF/retro-go
@@ -127,6 +146,7 @@ $WINQUAKE_SRCS = @(
 
 # PSRAM app shims (in apps/psram_quake/)
 $PAPP_DIR = "$ROOT\apps\psram_quake"
+$MP3_DIR = "$PAPP_DIR\third_party\micro-mp3\opencore-mp3dec"
 $PAPP_SRCS = @(
     "papp_main.c",
     "papp_vid.c",
@@ -135,6 +155,38 @@ $PAPP_SRCS = @(
     "papp_sys.c",
     "papp_rg_stubs.c",
     "papp_syscalls.c"
+)
+
+$MP3_SRCS = @(
+    "pvmp3_alias_reduction.cpp",
+    "pvmp3_crc.cpp",
+    "pvmp3_dct_16.cpp",
+    "pvmp3_dct_6.cpp",
+    "pvmp3_dct_9.cpp",
+    "pvmp3_decode_header.cpp",
+    "pvmp3_decode_huff_cw.cpp",
+    "pvmp3_dequantize_sample.cpp",
+    "pvmp3_equalizer.cpp",
+    "pvmp3_framedecoder.cpp",
+    "pvmp3_get_main_data_size.cpp",
+    "pvmp3_get_scale_factors.cpp",
+    "pvmp3_get_side_info.cpp",
+    "pvmp3_getbits.cpp",
+    "pvmp3_huffman_decoding.cpp",
+    "pvmp3_huffman_parsing.cpp",
+    "pvmp3_imdct_synth.cpp",
+    "pvmp3_mdct_18.cpp",
+    "pvmp3_mdct_6.cpp",
+    "pvmp3_mpeg2_get_scale_data.cpp",
+    "pvmp3_mpeg2_get_scale_factors.cpp",
+    "pvmp3_mpeg2_stereo_proc.cpp",
+    "pvmp3_normalize.cpp",
+    "pvmp3_poly_phase_synthesis.cpp",
+    "pvmp3_polyphase_filter_window.cpp",
+    "pvmp3_reorder.cpp",
+    "pvmp3_seek_synch.cpp",
+    "pvmp3_stereo_proc.cpp",
+    "pvmp3_tables.cpp"
 )
 
 # ── Build ────────────────────────────────────────────────────────────
@@ -177,6 +229,33 @@ foreach ($src in $PAPP_SRCS) {
     $ALL_OBJS += $obj
 }
 
+# Compile the PAPP MP3 wrapper and the portable OpenCore decoder.
+Write-Host "Compiling PAPP MP3 decoder ($($MP3_SRCS.Count + 1) C++ files)..." -ForegroundColor Cyan
+$mp3_include = $INCLUDES + @("-I$MP3_DIR", "-I$MP3_DIR\oscl")
+$mp3_wrapper = "papp_mp3.cpp"
+$wrapper_obj = "$BUILD\mp3_papp_mp3.o"
+$wrapper_args = $ARCH_FLAGS + $CXXFLAGS + $mp3_include + @("-c", "-o", $wrapper_obj, "$PAPP_DIR\$mp3_wrapper")
+$proc = Start-Process -FilePath $CXX -ArgumentList $wrapper_args -NoNewWindow -Wait -PassThru -RedirectStandardError "$BUILD\mp3_papp_mp3.err"
+if ($proc.ExitCode -ne 0) {
+    Write-Host "  FAIL: $mp3_wrapper" -ForegroundColor Red
+    Get-Content "$BUILD\mp3_papp_mp3.err" | Select-Object -First 20
+    $errors++
+}
+$ALL_OBJS += $wrapper_obj
+
+foreach ($src in $MP3_SRCS) {
+    $obj = "$BUILD\mp3_$($src -replace '\.cpp$','.o')"
+    $srcpath = "$MP3_DIR\$src"
+    $args = $ARCH_FLAGS + $CXXFLAGS + $mp3_include + @("-c", "-o", $obj, $srcpath)
+    $proc = Start-Process -FilePath $CXX -ArgumentList $args -NoNewWindow -Wait -PassThru -RedirectStandardError "$BUILD\mp3_$src.err"
+    if ($proc.ExitCode -ne 0) {
+        Write-Host "  FAIL: $src" -ForegroundColor Red
+        Get-Content "$BUILD\mp3_$src.err" | Select-Object -First 10
+        $errors++
+    }
+    $ALL_OBJS += $obj
+}
+
 if ($errors -gt 0) {
     Write-Host "`n$errors file(s) failed to compile. Aborting." -ForegroundColor Red
     exit 1
@@ -188,7 +267,7 @@ Write-Host "Compiled $($ALL_OBJS.Count) object files." -ForegroundColor Green
 Write-Host "Linking..." -ForegroundColor Cyan
 $ELF = "$BUILD\quake.elf"
 $link_args = $ARCH_FLAGS + $ALL_OBJS + $LDFLAGS + @("-o", $ELF)
-$proc = Start-Process -FilePath $CC -ArgumentList $link_args -NoNewWindow -Wait -PassThru -RedirectStandardError "$BUILD\link.err"
+$proc = Start-Process -FilePath $CXX -ArgumentList $link_args -NoNewWindow -Wait -PassThru -RedirectStandardError "$BUILD\link.err"
 if ($proc.ExitCode -ne 0) {
     Write-Host "  Link FAILED:" -ForegroundColor Red
     Get-Content "$BUILD\link.err" | Select-Object -First 30

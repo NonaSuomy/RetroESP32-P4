@@ -8,11 +8,21 @@
 #include "psram_app.h"
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "quakedef.h"
 
 extern const app_services_t *_papp_svc;
 extern volatile int papp_exit_requested;
+
+/* C ABI supplied by papp_mp3.cpp. */
+extern void *papp_mp3_create(void);
+extern void papp_mp3_reset(void *decoder);
+extern void papp_mp3_destroy(void *decoder);
+extern int papp_mp3_decode(void *decoder, const uint8_t *input, int input_length,
+                           int16_t *output, int output_capacity_samples,
+                           int *consumed, int *samples, int *sample_rate,
+                           int *channels);
 
 /* Forward declarations from common.c */
 byte *COM_LoadFile(char *path, int usehunk);
@@ -55,8 +65,40 @@ static int64_t total_samples_submitted = 0;
 
 #define AUDIO_BUFFER_SAMPLES 512
 
+#define MUSIC_NO_REQUEST (-2)
+#define MUSIC_STOP_REQUEST (-1)
+#define MUSIC_INPUT_BYTES 4096
+#define MUSIC_PCM_SAMPLES 2304 /* 1152 frames x 2 interleaved channels */
+#define MUSIC_OUTPUT_RATE 22050
+
 static int64_t mix_buffer[AUDIO_BUFFER_SAMPLES * 2];
 static int16_t output_buffer[AUDIO_BUFFER_SAMPLES * 2]; /* stereo interleaved L,R */
+
+/*
+ * Quake's original CD music API is driven by the game task, while decoding
+ * and mixing run in the audio task.  The game task only posts a small request;
+ * all file and decoder operations happen in the audio task.
+ */
+static volatile int music_request_track = MUSIC_NO_REQUEST;
+static volatile int music_request_loop = 1;
+static volatile int music_request_pause = MUSIC_NO_REQUEST;
+
+static void *music_file = NULL;
+static void *music_decoder = NULL;
+static uint8_t music_input[MUSIC_INPUT_BYTES];
+static size_t music_input_pos = 0;
+static size_t music_input_len = 0;
+static int16_t music_pcm[MUSIC_PCM_SAMPLES];
+static int music_pcm_frames = 0;
+static int music_pcm_channels = 0;
+static int music_sample_rate = MUSIC_OUTPUT_RATE;
+static uint32_t music_step_fixed = 1u << 16;
+static uint64_t music_pos_fixed = 0;
+static int music_track = 0;
+static int music_looping = 1;
+static int music_paused = 0;
+static int music_active = 0;
+static int music_logged_format = 0;
 
 /* Sound task handle — accessible for cleanup */
 void *quake_sound_task_handle = NULL;
@@ -198,6 +240,259 @@ void SND_Spatialize(channel_t *ch)
     if (ch->leftvol < 0) ch->leftvol = 0;
 }
 
+static void MusicCloseNow(void)
+{
+    if (music_file) {
+        _papp_svc->file_close(music_file);
+        music_file = NULL;
+    }
+    if (music_decoder) {
+        papp_mp3_destroy(music_decoder);
+        music_decoder = NULL;
+    }
+    music_input_pos = 0;
+    music_input_len = 0;
+    music_pcm_frames = 0;
+    music_pcm_channels = 0;
+    music_track = 0;
+    music_active = 0;
+    music_logged_format = 0;
+    music_pos_fixed = 0;
+}
+
+static int MusicSkipId3(void)
+{
+    uint8_t header[10];
+    size_t got;
+
+    if (!music_file)
+        return 0;
+
+    got = _papp_svc->file_read(header, 1, sizeof(header), music_file);
+    if (got == sizeof(header) && header[0] == 'I' && header[1] == 'D' &&
+        header[2] == '3' && !(header[6] & 0x80) && !(header[7] & 0x80) &&
+        !(header[8] & 0x80) && !(header[9] & 0x80)) {
+        long tag_size = 10L + ((long)header[6] << 21) +
+                        ((long)header[7] << 14) + ((long)header[8] << 7) +
+                        (long)header[9];
+        if (header[5] & 0x10)
+            tag_size += 10;
+        return _papp_svc->file_seek(music_file, tag_size, 0) == 0;
+    }
+
+    _papp_svc->file_seek(music_file, 0, 0);
+    return 1;
+}
+
+static void MusicResetInput(void)
+{
+    music_input_pos = 0;
+    music_input_len = 0;
+    music_pcm_frames = 0;
+    music_pos_fixed = 0;
+    if (music_decoder)
+        papp_mp3_reset(music_decoder);
+}
+
+static int MusicRewind(void)
+{
+    if (!music_file || !music_decoder)
+        return 0;
+    if (_papp_svc->file_seek(music_file, 0, 0) != 0)
+        return 0;
+    MusicResetInput();
+    return MusicSkipId3();
+}
+
+static int MusicReadMore(void)
+{
+    size_t remaining;
+    size_t room;
+    size_t got;
+
+    if (!music_file)
+        return 0;
+
+    remaining = music_input_len - music_input_pos;
+    if (music_input_pos > 0 && remaining > 0)
+        memmove(music_input, music_input + music_input_pos, remaining);
+    music_input_pos = 0;
+    music_input_len = remaining;
+
+    room = sizeof(music_input) - music_input_len;
+    if (!room)
+        return 0;
+    got = _papp_svc->file_read(music_input + music_input_len, 1, room,
+                               music_file);
+    music_input_len += got;
+    return got > 0;
+}
+
+static int MusicDecodeNext(void)
+{
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        int consumed = 0;
+        int samples = 0;
+        int sample_rate = 0;
+        int channels = 0;
+        int result;
+        int available;
+
+        if (!music_file || !music_decoder)
+            return 0;
+
+        available = (int)(music_input_len - music_input_pos);
+        if (available < 1536) {
+            if (!MusicReadMore()) {
+                if (music_looping && MusicRewind())
+                    continue;
+                MusicCloseNow();
+                return 0;
+            }
+            available = (int)(music_input_len - music_input_pos);
+        }
+
+        result = papp_mp3_decode(music_decoder, music_input + music_input_pos,
+                                 available, music_pcm, MUSIC_PCM_SAMPLES,
+                                 &consumed, &samples, &sample_rate, &channels);
+        if (consumed > 0) {
+            size_t advance = (size_t)consumed;
+            if (advance > music_input_len - music_input_pos)
+                advance = music_input_len - music_input_pos;
+            music_input_pos += advance;
+        }
+
+        if (result == 0 && samples > 0 && (channels == 1 || channels == 2)) {
+            music_pcm_channels = channels;
+            music_pcm_frames = samples / channels;
+            music_sample_rate = sample_rate > 0 ? sample_rate : MUSIC_OUTPUT_RATE;
+            music_step_fixed = (uint32_t)(((uint64_t)music_sample_rate << 16) /
+                                          MUSIC_OUTPUT_RATE);
+            if (!music_step_fixed)
+                music_step_fixed = 1;
+            if (!music_logged_format) {
+                _papp_svc->log_printf(
+                    "QUAKE MUSIC: decoded track %02d: %d Hz, %d channel(s), %d frames\n",
+                    music_track, music_sample_rate, music_pcm_channels,
+                    music_pcm_frames);
+                music_logged_format = 1;
+            }
+            return 1;
+        }
+
+        /* A malformed frame or a non-MP3 prefix: resynchronize. */
+        if (consumed == 0 && music_input_pos < music_input_len)
+            music_input_pos++;
+
+        if (result != 0 && music_input_pos >= music_input_len)
+            MusicReadMore();
+    }
+
+    _papp_svc->log_printf("QUAKE MUSIC: MP3 decode/resync failed on track %02d\n",
+                          music_track);
+    return 0;
+}
+
+static void MusicOpenTrack(int track, int looping)
+{
+    char path[96];
+
+    MusicCloseNow();
+    if (track <= 0)
+        return;
+
+    /* The launcher VFS only translates /sd/... paths. Quake's normal file
+       loader expands relative names through com_gamedir, but this CD-track
+       shim is outside that path, so use the full id1 path explicitly. */
+    snprintf(path, sizeof(path), "/sd/roms/quake/id1/music/track%02d.mp3", track);
+    music_file = _papp_svc->file_open(path, "rb");
+    if (!music_file) {
+        /* Accept the unpadded spelling too; standard Quake distributions use
+           track02, but a number of soundtrack packs use track2. */
+        snprintf(path, sizeof(path), "/sd/roms/quake/id1/music/track%d.mp3", track);
+        music_file = _papp_svc->file_open(path, "rb");
+    }
+    if (!music_file) {
+        _papp_svc->log_printf(
+            "QUAKE MUSIC: missing %s (MP3 is supported; OGG is not decoded yet)\n",
+            path);
+        return;
+    }
+
+    music_decoder = papp_mp3_create();
+    if (!music_decoder || !MusicSkipId3()) {
+        _papp_svc->log_printf("QUAKE MUSIC: cannot initialize %s\n", path);
+        MusicCloseNow();
+        return;
+    }
+
+    music_track = track;
+    music_looping = looping ? 1 : 0;
+    music_paused = 0;
+    music_active = 1;
+    _papp_svc->log_printf("QUAKE MUSIC: playing track %02d (%s)\n", track, path);
+}
+
+static void MusicApplyRequests(void)
+{
+    int requested_track = music_request_track;
+    int requested_pause = music_request_pause;
+
+    if (requested_track != MUSIC_NO_REQUEST) {
+        music_request_track = MUSIC_NO_REQUEST;
+        if (requested_track == MUSIC_STOP_REQUEST)
+            MusicCloseNow();
+        else
+            MusicOpenTrack(requested_track, music_request_loop);
+    }
+
+    if (requested_pause != MUSIC_NO_REQUEST) {
+        music_request_pause = MUSIC_NO_REQUEST;
+        music_paused = requested_pause ? 1 : 0;
+    }
+}
+
+static void MusicMix(int frame, int bgm_volume)
+{
+    int attempts = 0;
+
+    if (!music_active || music_paused || !bgm_volume)
+        return;
+
+    while (attempts++ < 3) {
+        int source_frame;
+        int16_t left;
+        int16_t right;
+
+        if (music_pcm_frames <= 0 && !MusicDecodeNext())
+            return;
+        if (music_pcm_frames <= 0)
+            return;
+
+        if (music_pos_fixed >= ((uint64_t)music_pcm_frames << 16)) {
+            music_pos_fixed -= (uint64_t)music_pcm_frames << 16;
+            music_pcm_frames = 0;
+            continue;
+        }
+
+        source_frame = (int)(music_pos_fixed >> 16);
+        if (source_frame >= music_pcm_frames)
+            continue;
+
+        if (music_pcm_channels == 1) {
+            left = music_pcm[source_frame];
+            right = left;
+        } else {
+            left = music_pcm[source_frame * 2];
+            right = music_pcm[source_frame * 2 + 1];
+        }
+        mix_buffer[frame * 2] += (int64_t)left * bgm_volume;
+        mix_buffer[frame * 2 + 1] += (int64_t)right * bgm_volume;
+        music_pos_fixed += music_step_fixed;
+        return;
+    }
+}
+
 static void audio_task(void *arg)
 {
     while (!papp_exit_requested && snd_initialized) {
@@ -205,7 +500,13 @@ static void audio_task(void *arg)
 
         memset(mix_buffer, 0, sizeof(mix_buffer));
         int volumeInt = (int)(volume.value * 256);
+        int bgmVolumeInt = (int)(bgmvolume.value * 256);
         int current_gen = sound_generation;
+
+        MusicApplyRequests();
+
+        for (int i = 0; i < AUDIO_BUFFER_SAMPLES; ++i)
+            MusicMix(i, bgmVolumeInt);
 
         for (int i = 0; i < total_channels; ++i) {
             channel_t *chan = &channels[i];
@@ -285,6 +586,11 @@ void S_Init(void)
     snd_initialized = true;
     paintedtime = 0;
     total_samples_submitted = 0;
+    music_request_track = MUSIC_NO_REQUEST;
+    music_request_loop = 1;
+    music_request_pause = MUSIC_NO_REQUEST;
+    music_track = 0;
+    music_active = 0;
 
     _papp_svc->audio_init(22050);
     _papp_svc->task_create(audio_task, "quake_snd", 4096, NULL, 8,
@@ -309,6 +615,32 @@ void papp_sound_shutdown(void)
         _papp_svc->task_delete(quake_sound_task_handle);
         quake_sound_task_handle = NULL;
     }
+    MusicCloseNow();
+}
+
+/* Called by cd_null.c, which provides Quake's platform-independent CD API. */
+void papp_music_play(int track, int looping)
+{
+    music_request_loop = looping ? 1 : 0;
+    music_request_track = track > 0 ? track : MUSIC_STOP_REQUEST;
+    _papp_svc->log_printf("QUAKE MUSIC: requested track %02d, loop=%d\n",
+                          track, looping ? 1 : 0);
+}
+
+void papp_music_stop(void)
+{
+    music_request_track = MUSIC_STOP_REQUEST;
+    _papp_svc->log_printf("QUAKE MUSIC: stop requested\n");
+}
+
+void papp_music_pause(void)
+{
+    music_request_pause = 1;
+}
+
+void papp_music_resume(void)
+{
+    music_request_pause = 0;
 }
 
 void S_StartSound(int entnum, int entchannel, sfx_t *sfx, vec3_t origin,
