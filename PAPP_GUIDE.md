@@ -155,6 +155,29 @@ the device alone doesn't distribute it.
 7. Compiled position-independent (`-mcmodel=medany`, `--no-relax`), linked at `0x4A000000` via
    `tools/psram_app.ld`, entry in `.text.entry`.
 
+### 3.4 Upload arbitrary SD-card files in batches
+
+The `PAPU` serial protocol is a generic file writer; it is not limited to `.papp` files. It creates
+missing parent directories and accepts any non-empty file up to 68 MiB. The single
+`upload_papp.py` script handles both individual files and batches. For one file, `--dest` is the
+complete destination path:
+
+```bash
+python3 tools/upload_papp.py assets/tracklist.cfg \
+    --port /dev/ttyUSB0 --dest /sd/roms/quake/id1/tracklist.cfg
+```
+
+For multiple files or a complete directory tree, pass multiple sources to the same script. It keeps
+one serial connection open and preserves subdirectories:
+
+```bash
+python3 tools/upload_papp.py SDcard/roms --port /dev/ttyUSB0 --dest /sd
+```
+
+That maps `SDcard/roms/quake/id1/pak0.pak` to `/sd/roms/quake/id1/pak0.pak`. Multiple individual
+files can also be supplied as positional arguments. Empty directories are skipped because the
+device creates directories as each file is written.
+
 ---
 
 ## 4. API Reference — `app_services_t`
