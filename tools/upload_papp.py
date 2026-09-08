@@ -1,197 +1,224 @@
 #!/usr/bin/env python3
-"""
-upload_papp.py — Upload a file to the ESP32-P4 SD card over USB Serial JTAG.
+"""Upload one or more arbitrary files/directories to the ESP32 SD card.
 
-Usage:
-    python tools/upload_papp.py firmware/opentyrian.papp
-    python tools/upload_papp.py firmware/opentyrian.papp --port COM30
-    python tools/upload_papp.py firmware/opentyrian.papp --dest /sd/roms/papp/opentyrian.papp
+Single-file compatibility:
+    python3 tools/upload_papp.py firmware/quake.papp --port /dev/ttyUSB0
+    python3 tools/upload_papp.py assets/tracklist.cfg \
+        --dest /sd/roms/quake/id1/tracklist.cfg
 
-If --dest is not given, the file is placed at /sd/roms/papp/<filename>.
+Batch uploads:
+    python3 tools/upload_papp.py SDcard/roms --dest /sd --port /dev/ttyUSB0
+    python3 tools/upload_papp.py file1 file2 directory --dest /sd
+
+Directories are walked recursively and their basename is preserved below
+--dest.  The serial connection stays open for the entire batch.  The device
+creates missing parent directories and accepts any non-empty file up to 68 MiB.
 """
 
 import argparse
-import os
 import sys
 import time
+from pathlib import Path
 
 try:
     import serial
 except ImportError:
-    print("Error: pyserial not installed. Run: pip install pyserial", file=sys.stderr)
-    sys.exit(1)
+    print("Error: pyserial is not installed", file=sys.stderr)
+    print("Install it with: python3 -m pip install pyserial", file=sys.stderr)
+    raise SystemExit(1)
 
-MAGIC = b"PAPU"
+
 ACK = b"\x06"
-DEFAULT_PORT = "COM30"
+MAGIC = b"PAPU"
+CHUNK_SIZE = 4096
+MAX_FILE_SIZE = 68 * 1024 * 1024
+DEFAULT_PORT = "/dev/ttyUSB0"
 DEFAULT_BAUD = 115200
-DEFAULT_SD_DIR = "/sd/roms/papp"
+DEFAULT_SINGLE_DEST = "/sd/roms/papp"
 
 
-def find_response(ser, timeout=10, initial_buf=b""):
-    """Read serial output until we find a line starting with \\x06 (protocol response)."""
-    deadline = time.time() + timeout
-    buf = initial_buf
-    while time.time() < deadline:
-        if ser.in_waiting > 0:
-            buf += ser.read(ser.in_waiting)
-        else:
-            time.sleep(0.05)
+class Protocol:
+    def __init__(self, ser):
+        self.ser = ser
+        self.buf = b""
 
-        # Look for ACK-prefixed lines
-        while ACK in buf:
-            idx = buf.index(ACK)
-            # Find end of line after ACK
-            nl = buf.find(b"\n", idx)
-            if nl < 0:
-                break  # Incomplete line, wait for more
-            line = buf[idx + 1 : nl].decode("utf-8", errors="replace").strip()
-            buf = buf[nl + 1 :]
-            return line
+    def _fill(self, timeout):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.ser.in_waiting:
+                self.buf = (self.buf + self.ser.read(self.ser.in_waiting))[-16384:]
+                return True
+            time.sleep(0.01)
+        return False
 
-    return None
+    def wait_response(self, prefixes, timeout=15):
+        """Wait for an ACK-prefixed response while ignoring ESP_LOG text."""
+        deadline = time.time() + timeout
+        patterns = [(ACK + prefix.encode("ascii"), prefix) for prefix in prefixes]
+        while time.time() < deadline:
+            for pattern, prefix in patterns:
+                idx = self.buf.find(pattern)
+                if idx >= 0:
+                    newline = self.buf.find(b"\n", idx + len(pattern))
+                    if newline >= 0:
+                        line = self.buf[idx + 1:newline].decode(
+                            "utf-8", "replace"
+                        ).strip()
+                        self.buf = self.buf[newline + 1:]
+                        return line
+            self._fill(min(0.2, max(0, deadline - time.time())))
+        return None
+
+    def wait_ack(self, timeout=30):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            idx = self.buf.find(ACK)
+            if idx >= 0:
+                self.buf = self.buf[idx + 1:]
+                return True
+            self._fill(min(0.2, max(0, deadline - time.time())))
+        return False
 
 
 def wait_for_launcher(ser, timeout=20):
-    """Wait through a UART bridge reset until the native launcher is ready."""
+    """Wait through the USB/CH340 reset until the launcher is listening."""
     deadline = time.time() + timeout
     buf = b""
     while time.time() < deadline:
-        chunk = ser.read(4096)
-        if chunk:
-            buf = (buf + chunk)[-8192:]
-            if b"Listening on UART0" in buf or b"Listening on USB Serial JTAG" in buf:
+        data = ser.read(4096)
+        if data:
+            buf = (buf + data)[-8192:]
+            if b"Listening on UART0" in buf:
                 return True
     return False
 
 
-def upload(port, baud, filepath, dest):
-    file_size = os.path.getsize(filepath)
-    filename = os.path.basename(filepath)
+def remote_join(root, *parts):
+    root = root.rstrip("/") or "/"
+    suffix = "/".join(part.strip("/") for part in parts)
+    return (root if root != "/" else "") + "/" + suffix
 
-    print(f"File:  {filepath} ({file_size:,} bytes)")
-    print(f"Dest:  {dest}")
-    print(f"Port:  {port}")
 
-    # Open without toggling DTR/RTS.  On ESP32 USB Serial JTAG those control
-    # lines can reset the board, which races the launcher before its upload
-    # task is listening and makes an otherwise valid upload time out.
-    ser = serial.Serial()
-    ser.port = port
-    ser.baudrate = baud
-    ser.timeout = 1
-    ser.dtr = False
-    ser.rts = False
-    ser.open()
+def collect_files(sources, dest_root, exact_single_file_dest=None):
+    result = []
+    for source_name in sources:
+        source = Path(source_name).resolve()
+        if source.is_file():
+            if exact_single_file_dest is not None:
+                destination = exact_single_file_dest
+            else:
+                destination = remote_join(dest_root, source.name)
+            result.append((source, destination))
+            continue
+        if source.is_dir():
+            for path in sorted(p for p in source.rglob("*") if p.is_file()):
+                relative = path.relative_to(source).as_posix()
+                result.append(
+                    (path, remote_join(dest_root, source.name, relative))
+                )
+            continue
+        raise SystemExit(f"source does not exist: {source_name}")
+    return result
 
-    # Opening the CH340 console port toggles the board reset lines.  Wait for
-    # the launcher task after that reset before sending the PAPU header.
-    print("Waiting for launcher...", end=" ", flush=True)
-    if wait_for_launcher(ser):
-        print("ready.")
-    else:
-        print("timeout; sending anyway.")
 
-    # Flush any pending data
-    ser.reset_input_buffer()
+def upload_one(proto, ser, local_path, destination):
+    size = local_path.stat().st_size
+    if size == 0 or size > MAX_FILE_SIZE:
+        raise SystemExit(f"invalid file size for {local_path}: {size}")
+    if len(destination.encode("utf-8")) >= 256:
+        raise SystemExit(f"destination path is too long: {destination}")
 
-    # --- Send protocol header ---
-    header = MAGIC + dest.encode("utf-8") + b"\n" + str(file_size).encode("utf-8") + b"\n"
+    header = (
+        MAGIC
+        + destination.encode("utf-8")
+        + b"\n"
+        + str(size).encode("ascii")
+        + b"\n"
+    )
     ser.write(header)
     ser.flush()
+    response = proto.wait_response(("READY",), 10)
+    if response != "READY":
+        raise SystemExit(f"device rejected {local_path}: {response!r}")
 
-    print("Waiting for READY...")
-    resp = find_response(ser, timeout=5)
-    if resp is None:
-        print("ERROR: No response from device (timeout). Is the firmware updated?", file=sys.stderr)
-        ser.close()
-        sys.exit(1)
-    if not resp.startswith("READY"):
-        print(f"ERROR: Unexpected response: {resp}", file=sys.stderr)
-        ser.close()
-        sys.exit(1)
-
-    print("Device ready. Uploading...")
-
-    # --- Send file data with flow control ---
-    # After each chunk, wait for a \x06 ACK byte from the device.
-    # This prevents the USB Serial JTAG RX buffer from overflowing.
-    chunk_size = 4096
     sent = 0
-    t0 = time.time()
-    leftover = b""  # bytes read but not yet consumed
-
-    with open(filepath, "rb") as f:
-        while sent < file_size:
-            chunk = f.read(min(chunk_size, file_size - sent))
+    with local_path.open("rb") as source:
+        while sent < size:
+            chunk = source.read(min(CHUNK_SIZE, size - sent))
+            if not chunk:
+                raise SystemExit(f"local file ended early: {local_path}")
             ser.write(chunk)
             ser.flush()
+            if not proto.wait_ack():
+                raise SystemExit(f"timeout uploading {local_path} at {sent}")
             sent += len(chunk)
 
-            # Wait for chunk ACK (\x06) from device
-            ack_deadline = time.time() + 10
-            got_ack = False
-            while time.time() < ack_deadline:
-                if ser.in_waiting > 0:
-                    leftover += ser.read(ser.in_waiting)
-                elif not leftover:
-                    time.sleep(0.01)
-                    continue
-
-                idx = leftover.find(ACK)
-                if idx >= 0:
-                    leftover = leftover[idx + 1:]  # keep bytes after ACK
-                    got_ack = True
-                    break
-
-            if not got_ack:
-                print(f"\nERROR: No chunk ACK at byte {sent}", file=sys.stderr)
-                ser.close()
-                sys.exit(1)
-
-            pct = sent * 100 // file_size
-            bar = "#" * (pct // 2) + "-" * (50 - pct // 2)
-            print(f"\r  [{bar}] {pct:3d}% ({sent:,}/{file_size:,})", end="", flush=True)
-
-    ser.flush()
-    elapsed = time.time() - t0
-    speed = file_size / elapsed / 1024 if elapsed > 0 else 0
-    print(f"\n  Sent {sent:,} bytes in {elapsed:.1f}s ({speed:.1f} KB/s)")
-
-    # --- Wait for confirmation ---
-    print("Waiting for confirmation...")
-    resp = find_response(ser, timeout=30, initial_buf=leftover)
-    ser.close()
-
-    if resp is None:
-        print("ERROR: No confirmation from device (timeout)", file=sys.stderr)
-        sys.exit(1)
-    if resp.startswith("OK"):
-        print(f"SUCCESS: {resp}")
-    else:
-        print(f"ERROR: {resp}", file=sys.stderr)
-        sys.exit(1)
+    response = proto.wait_response(("OK ", "ERR:"), 30)
+    if response is None or not response.startswith("OK "):
+        raise SystemExit(f"upload failed for {local_path}: {response!r}")
+    print(f"uploaded {local_path} -> {destination} ({sent:,} bytes)")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Upload a file to ESP32-P4 SD card over serial")
-    parser.add_argument("file", help="Local file to upload (e.g. firmware/opentyrian.papp)")
-    parser.add_argument("--port", default=DEFAULT_PORT, help=f"Serial port (default: {DEFAULT_PORT})")
-    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD, help=f"Baud rate (default: {DEFAULT_BAUD})")
-    parser.add_argument("--dest", default=None,
-                        help="Destination path on SD card (default: /sd/roms/papp/<filename>)")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("sources", nargs="+", help="files or directories to upload")
+    parser.add_argument(
+        "--dest",
+        default=None,
+        help=(
+            "single file: complete destination path; multiple files/directories: "
+            "SD destination root (default single-file path is /sd/roms/papp)"
+        ),
+    )
+    parser.add_argument("--port", default=DEFAULT_PORT)
+    parser.add_argument("--baud", type=int, default=DEFAULT_BAUD)
     args = parser.parse_args()
 
-    if not os.path.isfile(args.file):
-        print(f"Error: file not found: {args.file}", file=sys.stderr)
-        sys.exit(1)
+    first_source = Path(args.sources[0])
+    one_file = len(args.sources) == 1 and first_source.is_file()
+    if one_file:
+        source_name = first_source.resolve().name
+        if args.dest is None:
+            exact_dest = remote_join(DEFAULT_SINGLE_DEST, source_name)
+            dest_root = DEFAULT_SINGLE_DEST
+        else:
+            exact_dest = args.dest
+            dest_root = "/sd"
+    else:
+        exact_dest = None
+        dest_root = args.dest or "/sd"
 
-    dest = args.dest
-    if dest is None:
-        dest = f"{DEFAULT_SD_DIR}/{os.path.basename(args.file)}"
+    files = collect_files(args.sources, dest_root, exact_dest)
+    if not files:
+        raise SystemExit("no files found")
 
-    upload(args.port, args.baud, args.file, dest)
+    print(f"{len(files)} file(s) queued for {args.port}")
+    ser = serial.Serial()
+    ser.port = args.port
+    ser.baudrate = args.baud
+    ser.timeout = 0.2
+    # Do not let opening the CH340 toggle DTR/RTS unexpectedly.
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
+    try:
+        print("Waiting for launcher...", end=" ", flush=True)
+        if not wait_for_launcher(ser):
+            raise SystemExit("timeout waiting for launcher")
+        print("ready")
+        ser.reset_input_buffer()
+        proto = Protocol(ser)
+        for local_path, destination in files:
+            upload_one(proto, ser, local_path, destination)
+    finally:
+        ser.close()
+
+    print("upload complete")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except serial.SerialException as exc:
+        print(f"serial error: {exc}", file=sys.stderr)
+        raise SystemExit(1)
