@@ -116,6 +116,10 @@ static uint16_t s_touch_last_raw_x = 0, s_touch_last_raw_y = 0;
 #define ADC_THRESH_MID_LO  1200   /* second press: 1200..2200 (measured ~1650) */
 #define ADC_THRESH_MID_HI  2200
 
+static bool s_gpio_pad_detected = false;
+static bool s_gpio_pad_l2_stuck = false; /* GPIO 30 (L2/R) reads HIGH despite pull-down */
+static adc_oneshot_unit_handle_t s_gpio_pad_adc = NULL;
+
 #endif /* !CONFIG_HDMI_OUTPUT */
 
 volatile int odroid_paddle_adc_raw = -1;
@@ -146,11 +150,134 @@ static uint16_t s_usb_map_pid = 0;  /* PID of the currently loaded map */
 
 /* Board-specific controls live in their own component. */
 
+/* ─── GPIO gamepad detection & init ──────────────────────────────── */
+#ifndef CONFIG_HDMI_OUTPUT
+static void gpio_pad_detect_and_init(void)
+{
+    /* Detection: pull-up GPIO 29 (L1), read. If 0 → custom pad connected
+       (the physical pull-down on the gamepad board wins). */
+    gpio_config_t detect_cfg = {
+        .pin_bit_mask  = 1ULL << GPIO_PAD_L1,
+        .mode          = GPIO_MODE_INPUT,
+        .pull_up_en    = GPIO_PULLUP_ENABLE,
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&detect_cfg);
+    vTaskDelay(pdMS_TO_TICKS(5));   /* let the pull settle */
+
+    if (gpio_get_level(GPIO_PAD_L1) != 0) {
+        ESP_LOGI(TAG, "GPIO gamepad not detected (GPIO %d reads HIGH)", GPIO_PAD_L1);
+        /* Reconfigure L1 pin back to default to avoid interfering */
+        gpio_reset_pin(GPIO_PAD_L1);
+        return;
+    }
+
+    ESP_LOGI(TAG, "GPIO gamepad DETECTED (GPIO %d reads LOW)", GPIO_PAD_L1);
+    s_gpio_pad_detected = true;
+
+    /* Configure digital button GPIOs as input with internal pull-down.
+       Some boards lack physical pull-downs, causing floating pins to
+       read HIGH and produce phantom button presses (e.g. GPIO 30 → R). */
+    const int dig_pins[] = { GPIO_PAD_L1, GPIO_PAD_L2, GPIO_PAD_X,
+                             GPIO_PAD_Y, GPIO_PAD_START, GPIO_PAD_SELECT };
+    for (int i = 0; i < sizeof(dig_pins)/sizeof(dig_pins[0]); i++) {
+        gpio_config_t cfg = {
+            .pin_bit_mask  = 1ULL << dig_pins[i],
+            .mode          = GPIO_MODE_INPUT,
+            .pull_up_en    = GPIO_PULLUP_DISABLE,
+            .pull_down_en  = GPIO_PULLDOWN_ENABLE,
+            .intr_type     = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&cfg);
+    }
+
+    /* Check if GPIO 30 (L2 → R) is stuck HIGH despite internal pull-down.
+       If so, skip reading it at runtime to avoid phantom R presses. */
+    vTaskDelay(pdMS_TO_TICKS(2));
+    if (gpio_get_level(GPIO_PAD_L2)) {
+        s_gpio_pad_l2_stuck = true;
+        ESP_LOGW(TAG, "GPIO %d (L2/R) stuck HIGH despite pull-down — disabling", GPIO_PAD_L2);
+    }
+
+    /* Set up ADC2 for the three analog inputs (CH0=joy LR, CH1=joy UD, CH3=AB) */
+    if (!s_gpio_pad_adc) {
+        adc_oneshot_unit_init_cfg_t unit_cfg = {
+            .unit_id = ADC_UNIT_2,
+        };
+        esp_err_t adc_err = adc_oneshot_new_unit(&unit_cfg, &s_gpio_pad_adc);
+        if (adc_err != ESP_OK) {
+            ESP_LOGW(TAG, "GPIO pad: ADC2 unit init failed (%s)", esp_err_to_name(adc_err));
+            s_gpio_pad_detected = false;
+            return;
+        }
+
+        adc_oneshot_chan_cfg_t chan_cfg = {
+            .atten   = ADC_ATTEN_DB_12,
+            .bitwidth = ADC_BITWIDTH_12,
+        };
+        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_0, &chan_cfg);  /* GPIO 49 LR */
+        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_1, &chan_cfg);  /* GPIO 50 UD */
+        adc_oneshot_config_channel(s_gpio_pad_adc, ADC_CHANNEL_3, &chan_cfg);  /* GPIO 52 AB */
+    }
+
+    ESP_LOGI(TAG, "GPIO gamepad initialized: analog(49,50,52) digital(28,29,30,32,34,35)");
+}
+
+/* Read the custom GPIO gamepad and OR into the state. */
+static void gpio_pad_read(odroid_gamepad_state *state)
+{
+    if (!s_gpio_pad_detected || !s_gpio_pad_adc) return;
+
+    int joy_lr = 0, joy_ud = 0, ab_val = 0;
+    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_0, &joy_lr);
+    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_1, &joy_ud);
+    adc_oneshot_read(s_gpio_pad_adc, ADC_CHANNEL_3, &ab_val);
+
+    /* Joy left/right (GPIO 49) */
+    if (joy_lr > ADC_THRESH_HIGH)
+        state->values[ODROID_INPUT_LEFT] = 1;
+    else if (joy_lr > ADC_THRESH_MID_LO && joy_lr < ADC_THRESH_MID_HI)
+        state->values[ODROID_INPUT_RIGHT] = 1;
+
+    /* Joy up/down (GPIO 50) */
+    if (joy_ud > ADC_THRESH_HIGH)
+        state->values[ODROID_INPUT_UP] = 1;
+    else if (joy_ud > ADC_THRESH_MID_LO && joy_ud < ADC_THRESH_MID_HI)
+        state->values[ODROID_INPUT_DOWN] = 1;
+
+    /* A/B buttons (GPIO 52) */
+    if (ab_val > ADC_THRESH_HIGH)
+        state->values[ODROID_INPUT_A] = 1;
+    else if (ab_val > ADC_THRESH_MID_LO && ab_val < ADC_THRESH_MID_HI)
+        state->values[ODROID_INPUT_B] = 1;
+
+    /* Digital buttons — all active HIGH (pressed = 1) */
+    if (gpio_get_level(GPIO_PAD_L1))     state->values[ODROID_INPUT_L] = 1;
+    if (!s_gpio_pad_l2_stuck && gpio_get_level(GPIO_PAD_L2))
+                                         state->values[ODROID_INPUT_R] = 1;
+    if (gpio_get_level(GPIO_PAD_X))      state->values[ODROID_INPUT_X] = 1;
+    if (gpio_get_level(GPIO_PAD_Y))      state->values[ODROID_INPUT_Y] = 1;
+    if (gpio_get_level(GPIO_PAD_START))  state->values[ODROID_INPUT_START] = 1;
+    if (gpio_get_level(GPIO_PAD_SELECT)) state->values[ODROID_INPUT_SELECT] = 1;
+
+    /* Read paddle ADC (GPIO 51 = ADC2_CH2) if initialized. */
+    if (s_paddle_adc_handle) {
+        int raw = 0;
+        if (adc_oneshot_read(s_paddle_adc_handle, PADDLE_ADC_CHANNEL, &raw) == ESP_OK) {
+            odroid_paddle_adc_raw = raw;
+        }
+    }
+}
+#endif /* !CONFIG_HDMI_OUTPUT */
+
 void odroid_input_gamepad_init(void)
 {
     if (s_initialized) return;
 
 #ifndef CONFIG_HDMI_OUTPUT
+    /* Keep the pre-existing GPIO gamepad path alongside the board controls. */
+    gpio_pad_detect_and_init();
     elecrow_esp32_p4_aio_init();
 #endif
 
@@ -324,7 +451,7 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
         /* Read paddle potentiometer if ADC has been initialised and
            GPIO gamepad is NOT active (GPIO pad reads paddle itself) */
 #ifndef CONFIG_HDMI_OUTPUT
-        if (s_paddle_adc_handle) {
+        if (!s_gpio_pad_detected && s_paddle_adc_handle) {
             int raw = 0;
             if (adc_oneshot_read(s_paddle_adc_handle, PADDLE_ADC_CHANNEL, &raw) == ESP_OK) {
                 odroid_paddle_adc_raw = raw;
@@ -364,6 +491,9 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
     if (k & GAMEPAD_KEY_VOLUME_UP)   state->values[ODROID_INPUT_VOLUME] = 1;
 
 #ifndef CONFIG_HDMI_OUTPUT
+    /* Preserve the original GPIO pad input and merge the board controller. */
+    gpio_pad_read(state);
+
     /* Board ladder/touch controls — OR into USB input. */
     elecrow_esp32_p4_aio_read(state->values, ODROID_INPUT_MAX);
 
