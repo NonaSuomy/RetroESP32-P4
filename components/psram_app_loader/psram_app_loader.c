@@ -162,7 +162,7 @@ static void svc_task_delete(void *handle) {
     vTaskDelete((TaskHandle_t)handle);
 }
 
-/* Printf via USB JTAG — output goes to COM30 instead of UART0 */
+/* Printf via USB JTAG — output uses the configured USB serial endpoint. */
 static int svc_jtag_printf(const char *fmt, ...) {
     char buf[256];
     va_list ap;
@@ -422,7 +422,7 @@ static void populate_services(app_services_t *svc) {
     svc->mem_free       = free;
     svc->mem_caps_alloc = svc_mem_caps_alloc;
 
-    /* System — route through USB JTAG for COM30 debug visibility */
+    /* System — route through USB JTAG for debug visibility */
     svc->log_printf  = svc_jtag_printf;
     svc->log_vprintf = svc_jtag_vprintf;
     svc->delay_ms    = svc_delay_ms;

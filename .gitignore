@@ -1,6 +1,7 @@
 # === Build outputs ===
 build/
 **/build/
+**/build (1)/
 build_papp/
 **/managed_components/
 

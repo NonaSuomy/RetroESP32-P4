@@ -6,7 +6,7 @@
 #   .\generate_merged_bin_hdmi.ps1
 #
 # Flash with esptool:
-#   python -m esptool --chip esp32p4 -p COM30 -b 460800 write_flash 0x0 RetroESP32_P4_HDMI_v1.bin
+#   python -m esptool --chip esp32p4 -p $env:ESP_PORT -b 460800 write_flash 0x0 RetroESP32_P4_HDMI_v1.bin
 
 $ErrorActionPreference = "Stop"
 
@@ -93,7 +93,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Flash  : address 0x00000000" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "To flash via esptool:" 
-    Write-Host "  python -m esptool --chip esp32p4 -p COM30 -b 460800 write_flash 0x0 RetroESP32_P4_HDMI_v1.bin" -ForegroundColor White
+    Write-Host "  python -m esptool --chip esp32p4 -p `$env:ESP_PORT -b 460800 write_flash 0x0 RetroESP32_P4_HDMI_v1.bin" -ForegroundColor White
 } else {
     Write-Host ""
     Write-Host "=== FAILED ===" -ForegroundColor Red

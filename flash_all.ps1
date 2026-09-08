@@ -1,7 +1,7 @@
 # flash_all.ps1 -- Flash all binaries to ESP32-P4
 # Usage: .\flash_all.ps1
 # Uses $env:IDF_PATH and $env:IDF_PYTHON_ENV_PATH if set; auto-detects otherwise.
-# Port defaults to COM30; override with $env:ESP_PORT.
+# Set the target serial port in $env:ESP_PORT before running.
 
 $ErrorActionPreference = "Continue"
 
@@ -10,7 +10,10 @@ $ROOT = $PSScriptRoot
 Initialize-IdfEnv
 
 $BINS = Join-Path $ROOT 'firmware'
-$PORT = if ($env:ESP_PORT) { $env:ESP_PORT } else { "COM30" }
+if (-not $env:ESP_PORT) {
+    throw "Set `$env:ESP_PORT to the target serial port before flashing."
+}
+$PORT = $env:ESP_PORT
 
 # Kill any python processes holding the port
 Stop-Process -Name python -Force -ErrorAction SilentlyContinue

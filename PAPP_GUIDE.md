@@ -117,8 +117,8 @@ int app_entry(const app_services_t *svc)
 
 ```powershell
 # Source the ESP-IDF toolchain (provides riscv32-esp-elf-gcc)
-$env:IDF_PYTHON_ENV_PATH = "C:\Users\97254\.espressif\python_env\idf5.5_py3.12_env"
-& "C:\Users\97254\esp\v5.5.2\esp-idf\export.ps1"
+$env:IDF_PYTHON_ENV_PATH = "<ESP_IDF_PYTHON_ENV_PATH>"
+& "$env:IDF_PATH\export.ps1"
 
 # Compile + link + objcopy + pack → firmware\<AppName>.papp
 .\tools\build_psram_app.ps1 -AppName MyApp -Sources src\main.c
@@ -127,7 +127,7 @@ $env:IDF_PYTHON_ENV_PATH = "C:\Users\97254\.espressif\python_env\idf5.5_py3.12_e
 .\tools\build_psram_app.ps1 -AppName MyApp -Sources "src\main.c","src\game.c" -ExtraIncludes "src\include"
 
 # Upload to the SD card over USB Serial JTAG (no card removal)
-python tools\upload_papp.py firmware\MyApp.papp --port COM30
+python tools\upload_papp.py firmware\MyApp.papp --port $PORT
 ```
 
 The file lands at **`/sd/roms/papp/MyApp.papp`** and shows up in the launcher's **PAPP** carousel.
@@ -420,7 +420,7 @@ that memory → corruption.
 | `tools/build_<name>_papp.ps1` | Per-app builds (newlib, `--wrap`, bss sizing) |
 | `tools/psram_app.ld` | Linker script — base `0x4A000000`, `.text.entry` first |
 | `tools/pack_papp.py` | Wrap a flat `.bin` in the 32-byte `.papp` header |
-| `tools/upload_papp.py` | Push a `.papp` to `/sd/roms/papp/` over USB Serial JTAG |
+| `tools/upload_papp.py` | Push one file, multiple files, or a directory tree to the SD card over USB Serial JTAG |
 | `apps/psram_{opentyrian,doom,quake,duke3d}/` | Full port examples (shims, syscalls, compat headers) |
 | `apps/psram_lvgl/` | **LVGL + touch reference app** (see §9) |
 | `tools/build_lvgl_papp.ps1` | LVGL build (globs + caches ~276 LVGL objects, derives bss) |

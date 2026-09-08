@@ -30,7 +30,7 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
 
 # Console: UART0 only. Enable USB Serial JTAG as secondary console
-# so serial monitor works on COM30 (USB-JTAG port).
+# so the serial monitor works through the USB-JTAG port.
 CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
 # Log level

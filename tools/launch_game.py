@@ -14,12 +14,13 @@ Usage:
 The ROM path must be the full SD card path as seen by the device.
 """
 
+import os
 import sys
 import time
 import serial
 import serial.tools.list_ports
 
-DEFAULT_PORT = "COM30"
+DEFAULT_PORT = os.environ.get("ESP_PORT", "/dev/ttyUSB0")
 BAUD = 115200  # doesn't matter for USB Serial JTAG, but required by pyserial
 MAGIC = b"RUNR"
 ACK_PREFIX = b"\x06"

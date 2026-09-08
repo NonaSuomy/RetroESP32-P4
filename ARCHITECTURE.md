@@ -281,7 +281,7 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 
 ## Build & Flash
 
-**Prereqs:** ESP-IDF v5.5.2 at `C:\Users\97254\esp\v5.5.2\esp-idf`; Python env `idf5.5_py3.12_env`.
+**Prereqs:** ESP-IDF v5.5.2 installed locally; use the Python environment created by ESP-IDF.
 
 **Build all (LCD):** `.\build_all.ps1` — clean-builds launcher + 12 OTA apps into `firmware/`, then
 merges to `RetroESP32_P4_v1.bin`. Deletes each project's `build/` and `sdkconfig` first (avoids stale
@@ -289,18 +289,18 @@ config). **HDMI:** `.\build_all_hdmi.bat` → `firmware_hdmi/`.
 
 **Single app:**
 ```powershell
-& "C:\Users\97254\esp\v5.5.2\esp-idf\export.ps1"
+& "$env:IDF_PATH\export.ps1"
 cd apps\snes ; idf.py build      # delete sdkconfig + build/ first if last built for the other target
 ```
 
-**Flash all:** `.\flash_all.ps1` — port is `$PORT` (script default COM30; hardware COM5 as of
-Phase 49). Flash map mirrors `partitions_ota.csv`: bootloader 0x2000, partition-table 0x8000,
+**Flash all:** `.\flash_all.ps1` — set `$PORT` to the target's serial port before running. Flash
+map mirrors `partitions_ota.csv`: bootloader 0x2000, partition-table 0x8000,
 ota_data_initial 0xD000, launcher 0x10000, then each `*_app.bin` at its ota offset. Or flash the
 merged `RetroESP32_P4_v1.bin` at 0x0.
 
 **Flash one app:**
 ```powershell
-python -m esptool --chip esp32p4 -p COM5 -b 460800 --before default_reset --after hard_reset `
+python -m esptool --chip esp32p4 -p $PORT -b 460800 --before default_reset --after hard_reset `
   write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0xD0000 firmware\nes_app.bin
 ```
 

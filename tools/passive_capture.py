@@ -1,9 +1,10 @@
 ﻿"""Passive serial capture — no reset. Just records for 60 seconds."""
+import os
 import serial, time, sys
 
-PORT = "COM30"
+PORT = os.environ.get("ESP_PORT", "/dev/ttyUSB0")
 BAUD = 115200
-OUTFILE = r"C:\ESPIDFprojects\RetroESP32_P4\crash_log.txt"
+OUTFILE = os.environ.get("SERIAL_CAPTURE_OUT", "crash_log.txt")
 
 try:
     s = serial.Serial(PORT, BAUD, timeout=1)

@@ -79,7 +79,7 @@ Write-Host "=== $AppName.papp ready ===" -ForegroundColor Green
 # Upload
 if (-not $SkipUpload) {
     Write-Host "Uploading to device..." -ForegroundColor Cyan
-    python (Join-Path (Join-Path $ROOT "tools") "upload_papp.py") $pappPath --port COM30
+    python (Join-Path (Join-Path $ROOT "tools") "upload_papp.py") $pappPath --port $env:ESP_PORT
     if ($LASTEXITCODE -ne 0) { Write-Host "Upload failed (is device connected?)" -ForegroundColor Yellow }
 }
 
