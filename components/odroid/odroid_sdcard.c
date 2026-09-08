@@ -2,7 +2,7 @@
  * Odroid SD Card Compatibility Layer — ESP32-P4 Implementation
  *
  * Mounts the SD card via SDMMC 4-bit mode with on-chip LDO power control.
- * The Elecrow AIO routes the TF slot as a 1-bit bus: DO=39, SCK=43,
+ * The target board routes the TF slot as a 1-bit bus: DO=39, SCK=43,
  * CMD=44. GPIO40/41 are reserved for the GT911 touch reset/interrupt.
  */
 

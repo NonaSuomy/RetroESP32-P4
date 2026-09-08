@@ -30,4 +30,4 @@
 #define SD_MMC_D0   39
 #define SD_MMC_D1   40
 #define SD_MMC_D2   41
-/* GPIO42 is the Elecrow relay control; SD is intentionally one-bit. */
+/* GPIO42 is reserved for the relay control; SD is intentionally one-bit. */

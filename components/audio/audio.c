@@ -43,7 +43,7 @@ static bool s_initialized = false;
  * actual peripheral clock separately so the next app can still determine
  * whether a hardware reconfiguration is required. */
 static int s_hw_sample_rate = 0;
-/* The Elecrow board has an NS4168 I2S amplifier, not an ES8311 codec.
+/* This board has an NS4168 I2S amplifier, not an ES8311 codec.
  * GPIO6 drives a P-channel MOSFET, so the amplifier power gate is active-low. */
 static bool s_raw_i2s = false;
 static uint32_t s_pcm_log_count = 0;
@@ -195,12 +195,12 @@ esp_err_t audio_init(const audio_config_t *config)
     ESP_RETURN_ON_ERROR(i2s_driver_init(config), TAG, "I2S init failed");
     s_hw_sample_rate = config->sample_rate;
 
-    /* 2. The Elecrow NS4168 is a raw I2S amplifier controlled by a GPIO. */
+    /* 2. The NS4168 is a raw I2S amplifier controlled by a GPIO. */
     s_raw_i2s = (config->mclk_io < 0);
     if (s_raw_i2s) {
         if (config->pa_ctrl_io >= 0) {
             gpio_set_direction(config->pa_ctrl_io, GPIO_MODE_OUTPUT);
-            /* Elecrow's P-MOS audio power switch is enabled low. */
+            /* The board's P-MOS audio power switch is enabled low. */
             gpio_set_level(config->pa_ctrl_io, config->volume > 0 ? 0 : 1);
         }
         s_initialized = true;
@@ -297,7 +297,7 @@ esp_err_t audio_set_volume(int volume)
 
     if (s_raw_i2s) {
         if (s_config.pa_ctrl_io >= 0) {
-            /* Elecrow's P-MOS audio power switch is enabled low. */
+            /* The board's P-MOS audio power switch is enabled low. */
             gpio_set_level(s_config.pa_ctrl_io, volume > 0 ? 0 : 1);
         }
         return ESP_OK;

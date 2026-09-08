@@ -37,7 +37,7 @@
 
 static const char *TAG = "serial_upload";
 static TaskHandle_t s_upload_task = NULL;
-/* The Elecrow board exposes UART0 through the connected CH340 bridge as
+/* The target board exposes UART0 through the connected CH340 bridge as
  * /dev/ttyUSB0.  Keep the USB Serial JTAG backend available, but prefer
  * UART0 so the PAPU protocol works on the port physically connected here. */
 static bool s_uart_ready = false;

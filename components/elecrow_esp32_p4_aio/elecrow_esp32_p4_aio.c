@@ -42,7 +42,7 @@ void elecrow_esp32_p4_aio_init(void)
         .bitwidth = ADC_BITWIDTH_12,
     };
     ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc, ADC_CHANNEL_0, &chan_cfg));
-    ESP_LOGI(TAG, "Elecrow ESP32-P4 AIO controller ready (ADC GPIO16, touch GPIO2)");
+    ESP_LOGI(TAG, "ESP32-P4 AIO controller ready (ADC GPIO16, touch GPIO2)");
 }
 
 void elecrow_esp32_p4_aio_read(int *values, int value_count)

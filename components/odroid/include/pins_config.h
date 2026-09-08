@@ -30,5 +30,5 @@
 #define SD_MMC_D0   39
 #define SD_MMC_D1   40
 #define SD_MMC_D2   41
-/* GPIO42 is the Elecrow relay control.  The TF socket is wired for the
+/* GPIO42 is reserved for the relay control.  The TF socket is wired for the
  * one-bit bus only; deliberately do not expose/configure SD D3 here. */

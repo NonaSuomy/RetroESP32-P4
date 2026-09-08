@@ -51,7 +51,7 @@ esp_err_t gt911_touch_init(int8_t sda_pin, int8_t scl_pin, int8_t rst_pin, int8_
         },
     };
 
-    /* GT911 selects its address from the INT strap during reset. The Elecrow
+    /* GT911 selects its address from the INT strap during reset. The target
      * board documentation permits either address, so probe both. */
     const uint8_t addresses[] = { 0x5D, 0x14 };
     for (size_t i = 0; i < sizeof(addresses); ++i) {

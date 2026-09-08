@@ -144,7 +144,7 @@ static bool s_usb_map_loaded = false;
 static uint16_t s_usb_map_vid = 0;  /* VID of the currently loaded map */
 static uint16_t s_usb_map_pid = 0;  /* PID of the currently loaded map */
 
-/* Elecrow controls live in their own board component. */
+/* Board-specific controls live in their own component. */
 
 void odroid_input_gamepad_init(void)
 {
@@ -157,7 +157,7 @@ void odroid_input_gamepad_init(void)
     /* USB gamepad is initialized in odroid_system_init() */
     s_initialized = true;
 #ifndef CONFIG_HDMI_OUTPUT
-    ESP_LOGI(TAG, "Input subsystem ready (USB HID keyboard + Elecrow AIO controls)");
+    ESP_LOGI(TAG, "Input subsystem ready (USB HID keyboard + board controls)");
 #else
     ESP_LOGI(TAG, "Input subsystem ready (USB HID gamepad, HDMI mode)");
 #endif
@@ -364,7 +364,7 @@ void odroid_input_gamepad_read(odroid_gamepad_state *state)
     if (k & GAMEPAD_KEY_VOLUME_UP)   state->values[ODROID_INPUT_VOLUME] = 1;
 
 #ifndef CONFIG_HDMI_OUTPUT
-    /* Elecrow AIO ladder/touch controls — OR into USB input. */
+    /* Board ladder/touch controls — OR into USB input. */
     elecrow_esp32_p4_aio_read(state->values, ODROID_INPUT_MAX);
 
     /* GT911 controls: launcher uses only the corner menu/volume zones;
@@ -430,7 +430,7 @@ void odroid_paddle_adc_init(void)
 #else
     if (s_paddle_adc_handle) return;  /* already initialised */
 
-    /* Paddle is on ADC2; the Elecrow controller owns a separate ADC1 unit. */
+    /* Paddle is on ADC2; the board controller owns a separate ADC1 unit. */
     if (s_battery_adc_handle) {
         s_paddle_adc_handle = s_battery_adc_handle;
     } else {
