@@ -2,8 +2,8 @@
 """Record or capture the optional PAPP diagnostic screen stream.
 
 Examples:
-  python tools/record_screen.py 10.20.30.180 --screenshot screen.png
-  python tools/record_screen.py 10.20.30.180 --duration 10 --output papp.mp4
+  python tools/record_screen.py esp32.local --screenshot screen.png
+  python tools/record_screen.py esp32.local --duration 10 --output papp.mp4
 """
 
 from __future__ import annotations
