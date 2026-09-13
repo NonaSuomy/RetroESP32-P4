@@ -1,0 +1,1224 @@
+
+    Quest for Glory - Shadows of Darkness
+   Version 1.0 Release Notes
+
+============================================================
+This file contains some additional last minute tips and
+information that didn't make it into your game manual. If
+you are experiencing any difficulties playing the game,
+check this file for anything that may apply.
+
+------------------------------------------------------
+A NOTE TO ILLICIT USERS 
+
+If you have not purchased your own copy of this game, please
+do so.  We have worked extremely hard to produce a game that
+we feel is truly worth the purchase price.  If you feel it
+is not, you are welcome to take advantage of Sierra's return
+policy.
+
+------------------------------------------------------
+
+       TABLE OF CONTENTS
+
+   I  Basic Requirements for SHADOWS OF DARKNESS
+   A. DOS Requirements
+   B. WINDOWS Requirements
+
+  II  Installation Instructions
+   A. DOS Installation
+   B. WINDOWS Installation
+   C. Running SHADOWS OF DARKNESS
+   D. A note about Save games
+
+ III  Sound Card Information
+   A. 'I am not getting all the sounds I expect from
+      SHADOWS OF DARKNESS!'
+   B. Configuration for Sound Blaster and compatible cards
+      in DOS
+   C. Notes for Pro Audio Spectrum sound cards in DOS
+   D. MIDI Sound modules in DOS
+   E. Base and Extended level sounds in WINDOWS
+   F. Music in WINDOWS: Setting the MIDI MAPPER
+
+  IV  Technical Help
+   A. Setting the BRIGHTNESS in the game
+   B. ERROR MESSAGE: Byte Can't Be Allocated
+   C. ERROR MESSAGE: FATAL-Unable to find Mouse Driver
+   D. ERROR MESSAGE: DOS/4GW Professional Fatal Error:
+       Loader Failed - Insufficient Memory
+   E. Freeing memory in DOS
+   F. Freeing memory in Windows
+   V  Sierra addresses and phone numbers
+
+
+------------------------------------------------------
+I. Basic Requirements for SHADOWS OF DARKNESS
+------------------------------------------------------
+A. DOS Requirements
+
+- IBM PC or compatible with a 386 processor or higher
+- 4 MB of RAM
+- A hard disk with at least 15 MB free space
+- A VGA graphics card
+- A Mouse or Track ball
+- MS-DOS 5.0 OR ABOVE
+
+Supported Sound Devices:
+Sound Blaster, Adlib, PAS Plus/PAS 16, Roland MT-32 and
+compatible, Microsoft Sound System, General MIDI
+
+
+B. WINDOWS Requirements
+
+- IBM PC or compatible with a 386 processor or higher
+  (We recommend a 486 processor)
+- Windows 3.1 running in 386 ENHANCED mode with a 640X480 256
+  color VGA display driver installed
+- 4 MB of RAM with a Virtual Memory Swap file configured
+  for 4 MB
+- A hard disk with at least 16 MB free space
+- A Mouse or Track ball
+- MS-DOS 5.0 OR ABOVE
+
+- All sound cards are supported when the proper manufacturer
+  supplied drivers are loaded into Windows
+
+------------------------------------------------------
+II. Game Installation
+------------------------------------------------------
+A. INSTALLING THE GAME FOR DOS
+
+Insert the Disk #1 into your floppy drive and type the drive
+letter, example:
+
+A: [ENTER]
+
+At the prompt (A: or B:) type: INSTALL [ENTER]
+You can change options or accept default options.
+
+------------------------------------------------------
+B. INSTALLING THE GAME FOR WINDOWS
+
+To run in windows you must run the Windows SETUP program.
+Start Windows and select "RUN" from the Program Manager.
+Example:
+
+B:\SETUP
+
+The Windows install will copy over all the files
+that are needed to run the game in Windows.
+
+------------------------------------------------------
+C. RUNNING THE GAME
+
+For DOS:
+
+   From the directory in which you have installed
+   SHADOWS OF DARKNESS, type: SHADOWS [ENTER]
+
+For Windows:
+
+   Double click on the icon for SHADOWS OF DARKNESS.
+
+------------------------------------------------------
+D. A NOTE ABOUT SAVE GAMES
+
+Games saved while playing under DOS cannot be restored under
+Windows and vice versa. If you play the game for awhile
+under DOS or Windows and then decide to switch to the other,
+you must restart from the beginning. If you do not know
+which one you prefer, we recommend playing the game under
+DOS.
+
+------------------------------------------------------
+III. Sound Card Information
+------------------------------------------------------
+A. No sounds or reduced sounds
+
+There are several possible causes of this problem.  Our
+INSTALL program will usually select the proper sound
+configuration for your system but it will occasionally
+confuse a 16 bit sound card with a Roland MIDI device.  Run
+the INSTALL program and make sure that SHADOWS OF DARKNESS
+is set to use the appropriate sound hardware that is
+installed on your system.
+
+The volume levels of some of the more recent sound cards are
+adjusted using a software 'mixer' program.   Some software
+applications will actually change these level without
+returning them to their original setting.  If your are not
+able to hear all of the sound effects in SHADOWS OF
+DARKNESS, you may want to run the mixer program for your
+sound card to make sure that all of the volume settings are
+at a comfortable level.
+
+If you are using a BOOT disk to start SHADOWS OF DARKNESS,
+you may need to add a sound driver to the CONFIG.SYS on your
+BOOT disk.   The CONFIG.SYS on your C: driver should contain
+the proper command to load your sound driver but your sound
+card manual will give you full instructions on setting up
+your sound card's driver.
+
+------------------------------------------------------
+B. SOUND BLASTER/THUNDERBOARD INTERRUPT SETTING IN DOS
+
+Each time you start the game, it scans your hardware to
+determine the proper interrupt configuration for your sound
+card.  Depending on your system configuration, and the other
+devices installed, this process may not always be
+successful.  The result is distorted or missing digital
+audio sounds, very slow game speed, or game lockups.  This
+is most likely to happen when using a mouse connected via a
+bus interface.
+
+If you experience any of these symptoms, you can explicitly
+set the sound card interrupt using the BLASTER environment
+variable.  The Sound Blaster and Thunderboard drivers will
+first look for the interrupt setting in the BLASTER
+environment variable, and only attempt the autodetection if
+it is not found.
+
+The BLASTER environment variable is usually defined via a
+SET command in your AUTOEXEC.BAT file.  It should look
+something like this:
+
+   SET BLASTER=A220 D1 I7
+
+This specifies the I/O address, DMA channel, and interrupt
+line for your sound card, and is used by many products to
+determine this information.
+
+You can determine the setting of all your environment
+variables by typing SET at the DOS prompt.  You can display
+the current value of the BLASTER variable by typing ECHO
+BLASTER at the DOS prompt.
+
+If you already have a BLASTER environment variable set, make
+sure the values correspond to the actual hardware
+configuration of the card.  Refer to the card's reference
+documentation for more information.
+
+If you do not currently have a BLASTER environment variable,
+you should set one according to your sound card's
+configuration.  The only value required by Sierra games is
+the interrupt line.  If your sound card is configured for
+interrupt 7, the following command will insure that this
+game will properly determine your sound card configuration
+at startup:
+
+     SET BLASTER=I7
+
+This command should be added to your AUTOEXEC.BAT file so it 
+will run each time your computer is started.  Refer to your
+computer's documentation for more information on the SET
+command, environment variables, and the AUTOEXEC.BAT file.
+
+------------------------------------------------------
+C. PRO AUDIO SPECTRUM USERS IN DOS
+
+If you are using a Pro Audio Spectrum 16 or Plus card and
+experience problems during the game, re-run the INSTALL
+utility from the game directory and select "Sound Blaster"
+as your audio device.
+
+Selecting Sound Blaster will utilize the PAS card's built-in
+Sound Blaster emulation for digitized audio effects.
+
+If you are using a Pro Audio Spectrum Plus sound card, you
+will want to run the 'SB_ON' program before you start
+SHADOWS OF DARKNESS. You should do this each time you play
+the game to ensure that you are getting the best possible
+sound.
+
+------------------------------------------------------
+D. MIDI SOUND MODULES WITH THE DOS VERSION
+
+The DOS installation program for SHADOWS OF DARKNESS will
+automatically default to General MIDI for Music if you have
+an MPU-401 adapter card in your system.  This is fine as
+long as you really have a General MIDI device. However, if
+your sound module is not General MIDI compatible, the music
+will not sound right.
+
+If you have a Roland MT-32, LAPC-1, CM-32, or CM-64, you
+should choose the MT-32 Music option.
+
+Roland Sound Canvas, Roland SCC-1, Roland RAP-10, Yamaha T3
+or any other compatible General MIDI device owners should be
+fine with the default General MIDI option.
+
+------------------------------------------------------
+E. WINDOWS SOUND: Base or Extended levels
+
+The Windows install will ask you if you want to install for
+BASE or EXTENDED level sound.
+
+BASE level sound runs on channels 13 through 16 and is used
+for sound cards like Sound Blaster, Pro Audio Spectrum,
+Adlib, or any FM Yamaha 3812 type card.
+  
+EXTENDED level sound runs on channels 1 through 10 and is
+used for cards like the LAPC-I, MT-32, SCC-1, Sound Canvas,
+Turtle Beach MultiSound, or any General MIDI device.
+
+
+------------------------------------------------------
+F. MUSIC SUPPORT IN WINDOWS: SETTING UP THE MIDI MAPPER
+
+If you are not getting all the sounds that you are expecting
+through your Windows program, it may be because the MIDI
+Mapper is not setup for your sound card.  The MIDI Mapper
+program is located in the Window's Control Panel which is
+located in the group "Main." The MIDI Mapper provides
+filtering and changing of musical events to allow music to
+sound similar on all hardware.
+
+NOTE: If you have not installed the Windows drivers for your
+sound card, you will not see a MIDI Mapper icon. Refer to
+the instructions from the card manufacturer to properly
+install the card and Windows drivers.
+
+If none of the MIDI Mapper's available selections work
+properly with your sound card, you may want to create a new
+MIDI Mapper selection. You can create a new MIDI setup by
+selecting the "Setups" radio button then click on the "New"
+button. You will be presented with a new window: Enter
+"SHADOWS" for the Name and "SHADOWS OF DARKNESS MIDI" for
+the Description of this new MIDI setup.
+
+You will then be presented with a rather ominous looking
+screen with lots of options.  You will want to click on the
+field for channel 13 in the column Port Name. Click on the
+down arrow in this column to bring up a list that contains
+names of sound devices. Try using Adlib if it is available.
+If it is not, try one of the others that include 'FM' or
+'VOYETRA' in the description.  You may want to refer to your
+sound card documentation to be sure that you are using the
+correct driver.
+
+Repeat the same steps for channels 14 through 16. When you
+are finished, click on "OK" and indicate that you wish to
+save this new setup.  If your game sounds are still missing
+or they sound 'funny', try editing the MIDI setup you have
+just created by using the MIDI Mapper's edit screen and
+select a different driver for sound.
+
+If the music does not sound optimal when playing SHADOWS OF
+DARKNESS through Windows, you may want to consider running
+the game in DOS.  This decision will depend on what kind of
+sound device you have.  If you have one of the Base Level
+sound cards listed elsewhere in this README file, you should
+run the game in DOS for the best possible music.  If you
+have an Extended Level sound device, then you can enjoy
+optimal music in Windows or in DOS.
+
+------------------------------------------------------
+IV.  Trouble Shooting and Technical help
+-----------------------------------------------------
+
+A. SETTING MONITOR BRIGHTNESS LEVEL
+
+On some monitors, you may find the video brightness to be a
+little too dark for your tastes. If this is not due to the
+brightness control setting on your monitor being set too
+low, or you do not wish to change this setting, it is
+possible to change the default brightness setting in the
+game configuration file. To change this setting, edit the
+file 'RESOURCE.CFG' in the game directory using any text
+file editor, such as the DOS EDIT program (just type EDIT at
+the DOS prompt). Go to the line that says 'brightness = 0',
+change the 0 to a 1 and save the file to the game directory.
+If this is still too dark for you, try 2, 3 or even 4 for an
+extreme increase in brightness.
+
+------------------------------------------------------
+B. BYTES CAN'T BE ALLOCATED
+
+If you are receiving the message:
+
+"x NUMBER OF BYTES CAN'T BE ALLOCATED"
+
+To correct this problem, edit the file 'RESOURCE.CFG' in the
+game directory using any text file editor, such as the DOS
+EDIT program (just type EDIT at the DOS prompt). At the end
+of the file,  add the line 'STATICMEMORY = 250K'.  The
+default for this setting is 200K so if 250K doesn't do the
+trick, increase it again.
+
+------------------------------------------------------
+C.  FATAL - Unable to find Mouse driver
+
+This message indicates that the program could not
+communicate with your mouse.   Under normal circumstance, a
+software driver is loaded into memory so that application
+programs can communicate with the mouse hardware.  Your
+mouse may already work in WINDOWS (WINDOWS has a built-in
+mouse driver), but your DOS programs require that a driver
+is loaded into memory.
+
+You can locate further information on your mouse driver
+either in the documentation that came with your Mouse or in
+the manual Boot Disk instructions in section E. that
+follows.
+
+------------------------------------------------------
+D. DOS/4GW Professional Fatal Error: Loader Failed -
+   Insufficient Memory.
+
+This message will occur when you do not have enough EXTENDED
+memory available for SHADOWS OF DARKNESS.  What you may need
+to try is a DOS Boot disk.  This will make sure that your
+computer's memory is clear of any extra programs that could
+be taking up that extra memory that SHADOWS OF DARKNESS
+needs.
+
+Try the "Make Bootable Floppy" option from the INSTALL
+program to create a new startup disk for SHADOWS OF
+DARKNESS.
+
+------------------------------------------------------
+E. FREEING UP MEMORY IN DOS
+
+SIERRA ON-LINE MANUAL BOOT DISK INSTRUCTIONS
+
+The following instructions can be used if the automatic boot
+disk maker included in the install program does not function
+properly on your system. If you have the CD-ROM version of
+this program, or you are using certain hard drive
+compression utilities, you will need to add any necessary
+driver lines to your CONFIG.SYS and AUTOEXEC.BAT files.
+
+1) FORMATTING THE DISK
+
+PLEASE NOTE: It is necessary to format the disk even if the
+disk is already formatted.  The /S switch will transfer
+files to the boot disk which are necessary for the disk to
+work correctly.
+
+To make a Boot Disk, format a high density diskette in the
+A: drive. (Use /F:360 or  /F:720 parameter if using a low
+density diskette) Note: This will work ONLY from the A: drive.
+Type the command as follows:
+
+   FORMAT  A:/S  <Enter>
+
+If after entering this command the system responds with a 
+"Bad command or file name" error, then type: 
+
+   PATH=C:\DOS  <ENTER>
+
+Now retype the FORMAT command above.  If you still receive
+the same error, the MS DOS FORMAT command may not be on your
+system or it may have been renamed.  Programs such as PC
+Tools and Norton Disk Utilities can rename the format
+command to prevent accidental loss of data.
+
+2) LOCATING THE MOUSE DRIVERS
+
+If you plan to use a mouse with your game, it will be
+necessary to first load the mouse driver.  To do this,
+locate the mouse driver and copy it to the boot disk in your
+A: drive.  There are two types of mouse drivers available,
+MOUSE.SYS, which must be loaded in the CONFIG.SYS file and
+MOUSE.COM which must be loaded in the AUTOEXEC.BAT file. You
+do not need to load both MOUSE.SYS and MOUSE.COM. Locate the
+MOUSE.SYS or MOUSE.COM file.  Because the file MOUSE.SYS is
+usually smaller than MOUSE.COM we recommend that the
+MOUSE.SYS file be used in order to free more memory.
+
+If you do not know where the MOUSE.SYS or MOUSE.COM files
+are located on your system, and you have MS-DOS 5.0 or
+above, the command below should help in locating your mouse
+drivers. Type the following at the C:\> prompt.
+
+       DIR  \MOUSE  /S  <ENTER>
+
+This command only works with MS-DOS 5.0 or above and will
+cause the system to search all sub directories for a file
+called mouse.  If the system locates a file called mouse, it
+will display the path where the mouse files are located.
+For instance, if the MOUSE.SYS file is located in a
+C:\MOUSE> directory, the system will display:
+
+Directory of C:\MOUSE
+   MOUSE    SYS     55160 03-10-92   3:10a
+   MOUSE    COM     56408 03-10-93   6:00a
+
+If the system does not locate a mouse, your driver may have
+a different name or these files may not be currently
+installed on the system.  Some other common names for mouse
+drivers are IMOUSE, GMOUSE, and HPMOUSE.  Your mouse drivers
+may have been included on a floppy disk which came packaged
+along with your mouse.  For information on the proper name
+for your mouse, check the owner's manual which came with
+your mouse.
+
+3) Copying the mouse driver to your BOOT DISK:
+
+Once you have located the mouse driver, you will need to
+copy it to the boot disk.  In this step, we will assume that
+the mouse drivers were located in the C:\MOUSE> directory as
+shown in the step above.  To copy the MOUSE.SYS file to the
+boot disk, type the following at the C:\> prompt:
+
+   COPY  C:\MOUSE\MOUSE.*  A:  <ENTER>
+
+Please substitute the appropriate path and file name for
+your mouse driver in the command line above.  You should
+then see a message indicating some files were copied.
+
+4) CREATING THE CONFIG.SYS FILE
+
+Now switch to the A: and type the following:
+
+   COPY  CON  CONFIG.SYS <Enter>
+   (The cursor will drop down one line and blink)
+
+   FILES=50  <Enter>
+   BUFFERS=30 <Enter>
+
+If you are using the MOUSE.SYS file to load your mouse, add 
+the following line to the CONFIG.SYS.
+
+   DEVICE=MOUSE.SYS  <Enter>
+
+Complete the file by pressing the  F6  Function key <Enter>
+
+5) CREATING THE AUTOEXEC.BAT FILE
+
+Now create an AUTOEXEC.BAT file on the A: drive by typing:
+
+   COPY  CON  AUTOEXEC.BAT   <Enter>
+       (the cursor will drop down one line and blink)
+
+   SET  COMSPEC=C:\COMMAND.COM  <Enter>
+   PROMPT  $P$G  <Enter>
+   PATH=C:\DOS <Enter> 
+
+If you are using the MOUSE.COM file to load the mouse, add 
+the following line to the AUTOEXEC.BAT file.
+
+   MOUSE.COM  <Enter>
+
+Complete the file by pressing the  F6  Function key <Enter>
+
+Now you are ready to use your new Sierra Boot Disk.  Place
+the boot disk in your A: drive and press the <CTRL> <ALT>
+and <DEL> keys at the same time. Your computer will reboot
+and you will be ready to start your Sierra game as you
+normally would.
+
+------------------------------------------------------
+F. FREEING MEMORY IN WINDOWS
+
+The Windows memory managers will use memory differently that
+the standard DOS memory managers.  The problem that you are
+experiencing is related to the amount of available working
+memory within Windows.  You can check the available memory
+in Windows from the PROGRAM manager by selecting 'HELP' and
+then 'ABOUT PROGRAM MANAGER'.  The second line from the
+bottom of the Window will be the amount of free memory in
+Windows.
+
+The best way to solve the memory problem is to direct
+Windows to use a Virtual Memory swap file. Both your Windows
+manual and the HELP section in the CONTROL PANEL will give
+you a complete explanation of Virtual Memory and its
+configuration.
+
+-----------------------------------------------------
+V.  SIERRA ADDRESSES AND PHONE NUMBERS
+
+1) Ordering games
+
+If you are interested in future adventure games or any other 
+of the Sierra family of fine software products, call us at
+(800) 326-6654 [or (209) 683-4468 outside the United States].
+
+
+2) TECHNICAL HELP
+
+Please refer to the technical help section in your Sierra
+game manual.
+
+If you still have a problem, call or fax Sierra Technical 
+Support:
+
+   Tel:  (209) 683-8989 
+   Fax:  (209) 683-3633
+   Mail: (See address in Sierra Game Manual) 
+
+In the U.K. call or fax our Sierra Technical Support
+Department:
+
+   Tel:(44)734-303-171
+   Fax:(44)734-303-201
+   Mail: (See address in Sierra Game Manual)
+
+Sierra's Automated "800" Technical Support Line (800) 376-2683
+
+You can also reach the Technical Support Department on the 
+following services:
+
+   Sierra BBS......(209) 683-4463 (Settings 8,N,1 & up to 9600 bps)
+   CompuServe......GAMAPUB (Technical Support ID 76004,2143)
+   PRODIGY.........Technical Support ID WBWW55A
+   GEnie...........Private E-Mail SIERRA.SUP
+   America Online..Keyword: SIERRA
+
+============================================================
+  Quest for Glory IV - Shadows of Darkness - PC Floppy Version
+	      Patch to Update to Version 1.1a
+		     January 10, 1993
+
+INTRODUCTION
+
+This diskette or archive file contains the necessary files
+to update your copy of Quest for Glory from version 1.0, 1.0a
+or 1.1 to version 1.1a.  This update corrects several problems
+described below.
+
+PLEASE NOTE:  IN ORDER TO CORRECT THE TECHNICAL DIFFICULTIES YOU
+MAY HAVE ENCOUNTERED WITH THIS PROGRAM, IT WAS NECESSARY THAT WE
+MAKE REVISIONS TO THE PROGRAM THAT WILL NOT ALLOW FOR THE USE OF
+PREVIOUS SAVED GAMES.  WE SINCERELY APOLOGIZE FOR THIS INCONVENIENCE.
+
+CONTENTS
+
+This diskette or archive includes the following files:
+
+	 README       This file
+	 README.BAT   Batch file to display this file
+	 PATCH.EXE    The patch utility program
+	 PATCH.RTP    A file containing all patch data
+
+INSTALLATION INSTRUCTIONS
+
+To update your game, copy these files into your
+game directory (e.g. C:\SIERRA\SHADOWS), and then from
+within that directory, type PATCH and press Enter at the DOS
+prompt.  The patch utility will first scan to insure it is
+updating the correct files, and then it will automatically
+install all modifications, including new files.  This
+utility will report its progress, and provide appropriate
+messages if any errors are encountered.
+
+ABOUT THIS UPDATE
+
+This game is one of the first of a new generation of Sierra
+products based on an exciting new 32-bit architecture.
+Version 1.0 was tested extensively prior to its release, in
+the same fashion we have successfully tested our earlier
+16-bit products.
+
+However, the special requirements of 32-bit software make
+advanced products like this more sensitive than previous
+16-bit products to specific system configuration related
+issues. Thanks to the feedback from initial customers, we
+have been able to identify and solve all known system
+specific issues.
+
+At the heart of these issues is a third party "DOS extender"
+that provides this game with 32-bit access to extended
+memory.  Included in this patch is an updated version of
+this DOS extender, with fixes for numerous customer reported
+problems.  Sierra has tested this version extensively with
+this game to insure compatibility and proper operation.
+
+This update also includes other corrections which should
+eliminate problems with the sound cards under certain system
+configurations.  It also solves the occasional problems
+encountered when saving and restoring games in certain
+situations.
+
+Game-specific problems that were fixed include:
+
+  * Polygon problems, to include "purge is not a selector for
+    glory", have been fixed.
+  * Fatal "Assertion Failure" during saving has been fixed.
+  * Fatal at the Monk's Tomb has been fixed.
+  * Fatal at the Thieves Guild main safe is fixed.
+  * Fatal when Restoring from the Burning Gypsy death message
+    has been  fixed.
+  * Fatal lockup when Ego is caught by Ad Avis has been fixed.
+  * Fatal in the swamp, when jumping from hummock to land, has
+    been fixed.
+  * Saved game size and restore time has been decreased.
+
+Also, many cosmetic changes have been added to help improve the
+look and feel of the game. A patch to fix importing problems is
+not included with this disk, but is available for downloading
+from the Sierra BBS, CompuServe, GEnie and America On-Line.  You
+can also request the patch from the Sierra Technical Support
+Department.
+
+	 Quest for Glory - Shadows of Darkness
+	      Version 1.0 Release Notes
+
+============================================================
+This file contains some additional last minute tips and
+information that didn't make it into your game manual. If
+you are experiencing any difficulties playing the game,
+check this file for anything that may apply.
+
+------------------------------------------------------
+A NOTE TO ILLICIT USERS 
+
+If you have not purchased your own copy of this game, please
+do so.  We have worked extremely hard to produce a game that
+we feel is truly worth the purchase price.  If you feel it
+is not, you are welcome to take advantage of Sierra's return
+policy.
+
+------------------------------------------------------
+
+       TABLE OF CONTENTS
+
+   I  Basic Requirements for SHADOWS OF DARKNESS
+   A. DOS Requirements
+   B. WINDOWS Requirements
+
+  II  Installation Instructions
+   A. DOS Installation
+   B. WINDOWS Installation
+   C. Running SHADOWS OF DARKNESS
+   D. A note about Save games
+
+ III  Sound Card Information
+   A. 'I am not getting all the sounds I expect from
+      SHADOWS OF DARKNESS!'
+   B. Configuration for Sound Blaster and compatible cards
+      in DOS
+   C. Notes for Pro Audio Spectrum sound cards in DOS
+   D. MIDI Sound modules in DOS
+   E. Base and Extended level sounds in WINDOWS
+   F. Music in WINDOWS: Setting the MIDI MAPPER
+
+  IV  Technical Help
+   A. Setting the BRIGHTNESS in the game
+   B. ERROR MESSAGE: Byte Can't Be Allocated
+   C. ERROR MESSAGE: FATAL-Unable to find Mouse Driver
+   D. ERROR MESSAGE: DOS/4GW Professional Fatal Error:
+       Loader Failed - Insufficient Memory
+   E. Freeing memory in DOS
+   F. Freeing memory in Windows
+   V  Sierra addresses and phone numbers
+
+
+------------------------------------------------------
+I. Basic Requirements for SHADOWS OF DARKNESS
+------------------------------------------------------
+A. DOS Requirements
+
+- IBM PC or compatible with a 386 processor or higher
+- 4 MB of RAM
+- A hard disk with at least 15 MB free space
+- A VGA graphics card
+- A Mouse or Track ball
+- MS-DOS 5.0 OR ABOVE
+
+Supported Sound Devices:
+Sound Blaster, Adlib, PAS Plus/PAS 16, Roland MT-32 and
+compatible, Microsoft Sound System, General MIDI
+
+
+B. WINDOWS Requirements
+
+- IBM PC or compatible with a 386 processor or higher
+  (We recommend a 486 processor)
+- Windows 3.1 running in 386 ENHANCED mode with a 640X480 256
+  color VGA display driver installed
+- 4 MB of RAM with a Virtual Memory Swap file configured
+  for 4 MB
+- A hard disk with at least 16 MB free space
+- A Mouse or Track ball
+- MS-DOS 5.0 OR ABOVE
+
+- All sound cards are supported when the proper manufacturer
+  supplied drivers are loaded into Windows
+
+------------------------------------------------------
+II. Game Installation
+------------------------------------------------------
+A. INSTALLING THE GAME FOR DOS
+
+Insert the Disk #1 into your floppy drive and type the drive
+letter, example:
+
+A: [ENTER]
+
+At the prompt (A: or B:) type: INSTALL [ENTER]
+You can change options or accept default options.
+
+------------------------------------------------------
+B. INSTALLING THE GAME FOR WINDOWS
+
+To run in windows you must run the Windows SETUP program.
+Start Windows and select "RUN" from the Program Manager.
+Example:
+
+B:\SETUP
+
+The Windows install will copy over all the files
+that are needed to run the game in Windows.
+
+------------------------------------------------------
+C. RUNNING THE GAME
+
+For DOS:
+
+   From the directory in which you have installed
+   SHADOWS OF DARKNESS, type: SHADOWS [ENTER]
+
+For Windows:
+
+   Double click on the icon for SHADOWS OF DARKNESS.
+
+------------------------------------------------------
+D. A NOTE ABOUT SAVE GAMES
+
+Games saved while playing under DOS cannot be restored under
+Windows and vice versa. If you play the game for awhile
+under DOS or Windows and then decide to switch to the other,
+you must restart from the beginning. If you do not know
+which one you prefer, we recommend playing the game under
+DOS.
+
+------------------------------------------------------
+III. Sound Card Information
+------------------------------------------------------
+A. No sounds or reduced sounds
+
+There are several possible causes of this problem.  Our
+INSTALL program will usually select the proper sound
+configuration for your system but it will occasionally
+confuse a 16 bit sound card with a Roland MIDI device.  Run
+the INSTALL program and make sure that SHADOWS OF DARKNESS
+is set to use the appropriate sound hardware that is
+installed on your system.
+
+The volume levels of some of the more recent sound cards are
+adjusted using a software 'mixer' program.   Some software
+applications will actually change these level without
+returning them to their original setting.  If your are not
+able to hear all of the sound effects in SHADOWS OF
+DARKNESS, you may want to run the mixer program for your
+sound card to make sure that all of the volume settings are
+at a comfortable level.
+
+If you are using a BOOT disk to start SHADOWS OF DARKNESS,
+you may need to add a sound driver to the CONFIG.SYS on your
+BOOT disk.   The CONFIG.SYS on your C: driver should contain
+the proper command to load your sound driver but your sound
+card manual will give you full instructions on setting up
+your sound card's driver.
+
+------------------------------------------------------
+B. SOUND BLASTER/THUNDERBOARD INTERRUPT SETTING IN DOS
+
+Each time you start the game, it scans your hardware to
+determine the proper interrupt configuration for your sound
+card.  Depending on your system configuration, and the other
+devices installed, this process may not always be
+successful.  The result is distorted or missing digital
+audio sounds, very slow game speed, or game lockups.  This
+is most likely to happen when using a mouse connected via a
+bus interface.
+
+If you experience any of these symptoms, you can explicitly
+set the sound card interrupt using the BLASTER environment
+variable.  The Sound Blaster and Thunderboard drivers will
+first look for the interrupt setting in the BLASTER
+environment variable, and only attempt the autodetection if
+it is not found.
+
+The BLASTER environment variable is usually defined via a
+SET command in your AUTOEXEC.BAT file.  It should look
+something like this:
+
+   SET BLASTER=A220 D1 I7
+
+This specifies the I/O address, DMA channel, and interrupt
+line for your sound card, and is used by many products to
+determine this information.
+
+You can determine the setting of all your environment
+variables by typing SET at the DOS prompt.  You can display
+the current value of the BLASTER variable by typing ECHO
+BLASTER at the DOS prompt.
+
+If you already have a BLASTER environment variable set, make
+sure the values correspond to the actual hardware
+configuration of the card.  Refer to the card's reference
+documentation for more information.
+
+If you do not currently have a BLASTER environment variable,
+you should set one according to your sound card's
+configuration.  The only value required by Sierra games is
+the interrupt line.  If your sound card is configured for
+interrupt 7, the following command will insure that this
+game will properly determine your sound card configuration
+at startup:
+
+     SET BLASTER=I7
+
+This command should be added to your AUTOEXEC.BAT file so it 
+will run each time your computer is started.  Refer to your
+computer's documentation for more information on the SET
+command, environment variables, and the AUTOEXEC.BAT file.
+
+------------------------------------------------------
+C. PRO AUDIO SPECTRUM USERS IN DOS
+
+If you are using a Pro Audio Spectrum 16 or Plus card and
+experience problems during the game, re-run the INSTALL
+utility from the game directory and select "Sound Blaster"
+as your audio device.
+
+Selecting Sound Blaster will utilize the PAS card's built-in
+Sound Blaster emulation for digitized audio effects.
+
+If you are using a Pro Audio Spectrum Plus sound card, you
+will want to run the 'SB_ON' program before you start
+SHADOWS OF DARKNESS. You should do this each time you play
+the game to ensure that you are getting the best possible
+sound.
+
+------------------------------------------------------
+D. MIDI SOUND MODULES WITH THE DOS VERSION
+
+The DOS installation program for SHADOWS OF DARKNESS will
+automatically default to General MIDI for Music if you have
+an MPU-401 adapter card in your system.  This is fine as
+long as you really have a General MIDI device. However, if
+your sound module is not General MIDI compatible, the music
+will not sound right.
+
+If you have a Roland MT-32, LAPC-1, CM-32, or CM-64, you
+should choose the MT-32 Music option.
+
+Roland Sound Canvas, Roland SCC-1, Roland RAP-10, Yamaha T3
+or any other compatible General MIDI device owners should be
+fine with the default General MIDI option.
+
+------------------------------------------------------
+E. WINDOWS SOUND: Base or Extended levels
+
+The Windows install will ask you if you want to install for
+BASE or EXTENDED level sound.
+
+BASE level sound runs on channels 13 through 16 and is used
+for sound cards like Sound Blaster, Pro Audio Spectrum,
+Adlib, or any FM Yamaha 3812 type card.
+  
+EXTENDED level sound runs on channels 1 through 10 and is
+used for cards like the LAPC-I, MT-32, SCC-1, Sound Canvas,
+Turtle Beach MultiSound, or any General MIDI device.
+
+
+------------------------------------------------------
+F. MUSIC SUPPORT IN WINDOWS: SETTING UP THE MIDI MAPPER
+
+If you are not getting all the sounds that you are expecting
+through your Windows program, it may be because the MIDI
+Mapper is not setup for your sound card.  The MIDI Mapper
+program is located in the Window's Control Panel which is
+located in the group "Main." The MIDI Mapper provides
+filtering and changing of musical events to allow music to
+sound similar on all hardware.
+
+NOTE: If you have not installed the Windows drivers for your
+sound card, you will not see a MIDI Mapper icon. Refer to
+the instructions from the card manufacturer to properly
+install the card and Windows drivers.
+
+If none of the MIDI Mapper's available selections work
+properly with your sound card, you may want to create a new
+MIDI Mapper selection. You can create a new MIDI setup by
+selecting the "Setups" radio button then click on the "New"
+button. You will be presented with a new window: Enter
+"SHADOWS" for the Name and "SHADOWS OF DARKNESS MIDI" for
+the Description of this new MIDI setup.
+
+You will then be presented with a rather ominous looking
+screen with lots of options.  You will want to click on the
+field for channel 13 in the column Port Name. Click on the
+down arrow in this column to bring up a list that contains
+names of sound devices. Try using Adlib if it is available.
+If it is not, try one of the others that include 'FM' or
+'VOYETRA' in the description.  You may want to refer to your
+sound card documentation to be sure that you are using the
+correct driver.
+
+Repeat the same steps for channels 14 through 16. When you
+are finished, click on "OK" and indicate that you wish to
+save this new setup.  If your game sounds are still missing
+or they sound 'funny', try editing the MIDI setup you have
+just created by using the MIDI Mapper's edit screen and
+select a different driver for sound.
+
+If the music does not sound optimal when playing SHADOWS OF
+DARKNESS through Windows, you may want to consider running
+the game in DOS.  This decision will depend on what kind of
+sound device you have.  If you have one of the Base Level
+sound cards listed elsewhere in this README file, you should
+run the game in DOS for the best possible music.  If you
+have an Extended Level sound device, then you can enjoy
+optimal music in Windows or in DOS.
+
+------------------------------------------------------
+IV.  Trouble Shooting and Technical help
+-----------------------------------------------------
+
+A. SETTING MONITOR BRIGHTNESS LEVEL
+
+On some monitors, you may find the video brightness to be a
+little too dark for your tastes. If this is not due to the
+brightness control setting on your monitor being set too
+low, or you do not wish to change this setting, it is
+possible to change the default brightness setting in the
+game configuration file. To change this setting, edit the
+file 'RESOURCE.CFG' in the game directory using any text
+file editor, such as the DOS EDIT program (just type EDIT at
+the DOS prompt). Go to the line that says 'brightness = 0',
+change the 0 to a 1 and save the file to the game directory.
+If this is still too dark for you, try 2, 3 or even 4 for an
+extreme increase in brightness.
+
+------------------------------------------------------
+B. BYTES CAN'T BE ALLOCATED
+
+If you are receiving the message:
+
+"x NUMBER OF BYTES CAN'T BE ALLOCATED"
+
+To correct this problem, edit the file 'RESOURCE.CFG' in the
+game directory using any text file editor, such as the DOS
+EDIT program (just type EDIT at the DOS prompt). At the end
+of the file,  add the line 'STATICMEMORY = 250K'.  The
+default for this setting is 200K so if 250K doesn't do the
+trick, increase it again.
+
+------------------------------------------------------
+C.  FATAL - Unable to find Mouse driver
+
+This message indicates that the program could not
+communicate with your mouse.   Under normal circumstance, a
+software driver is loaded into memory so that application
+programs can communicate with the mouse hardware.  Your
+mouse may already work in WINDOWS (WINDOWS has a built-in
+mouse driver), but your DOS programs require that a driver
+is loaded into memory.
+
+You can locate further information on your mouse driver
+either in the documentation that came with your Mouse or in
+the manual Boot Disk instructions in section E. that
+follows.
+
+------------------------------------------------------
+D. DOS/4GW Professional Fatal Error: Loader Failed -
+   Insufficient Memory.
+
+This message will occur when you do not have enough EXTENDED
+memory available for SHADOWS OF DARKNESS.  What you may need
+to try is a DOS Boot disk.  This will make sure that your
+computer's memory is clear of any extra programs that could
+be taking up that extra memory that SHADOWS OF DARKNESS
+needs.
+
+Try the "Make Bootable Floppy" option from the INSTALL
+program to create a new startup disk for SHADOWS OF
+DARKNESS.
+
+------------------------------------------------------
+E. FREEING UP MEMORY IN DOS
+
+SIERRA ON-LINE MANUAL BOOT DISK INSTRUCTIONS
+
+The following instructions can be used if the automatic boot
+disk maker included in the install program does not function
+properly on your system. If you have the CD-ROM version of
+this program, or you are using certain hard drive
+compression utilities, you will need to add any necessary
+driver lines to your CONFIG.SYS and AUTOEXEC.BAT files.
+
+1) FORMATTING THE DISK
+
+PLEASE NOTE: It is necessary to format the disk even if the
+disk is already formatted.  The /S switch will transfer
+files to the boot disk which are necessary for the disk to
+work correctly.
+
+To make a Boot Disk, format a high density diskette in the
+A: drive. (Use /F:360 or  /F:720 parameter if using a low
+density diskette) Note: This will work ONLY from the A: drive.
+Type the command as follows:
+
+   FORMAT  A:/S  <Enter>
+
+If after entering this command the system responds with a 
+"Bad command or file name" error, then type: 
+
+   PATH=C:\DOS  <ENTER>
+
+Now retype the FORMAT command above.  If you still receive
+the same error, the MS DOS FORMAT command may not be on your
+system or it may have been renamed.  Programs such as PC
+Tools and Norton Disk Utilities can rename the format
+command to prevent accidental loss of data.
+
+2) LOCATING THE MOUSE DRIVERS
+
+If you plan to use a mouse with your game, it will be
+necessary to first load the mouse driver.  To do this,
+locate the mouse driver and copy it to the boot disk in your
+A: drive.  There are two types of mouse drivers available,
+MOUSE.SYS, which must be loaded in the CONFIG.SYS file and
+MOUSE.COM which must be loaded in the AUTOEXEC.BAT file. You
+do not need to load both MOUSE.SYS and MOUSE.COM. Locate the
+MOUSE.SYS or MOUSE.COM file.  Because the file MOUSE.SYS is
+usually smaller than MOUSE.COM we recommend that the
+MOUSE.SYS file be used in order to free more memory.
+
+If you do not know where the MOUSE.SYS or MOUSE.COM files
+are located on your system, and you have MS-DOS 5.0 or
+above, the command below should help in locating your mouse
+drivers. Type the following at the C:\> prompt.
+
+       DIR  \MOUSE  /S  <ENTER>
+
+This command only works with MS-DOS 5.0 or above and will
+cause the system to search all sub directories for a file
+called mouse.  If the system locates a file called mouse, it
+will display the path where the mouse files are located.
+For instance, if the MOUSE.SYS file is located in a
+C:\MOUSE> directory, the system will display:
+
+Directory of C:\MOUSE
+   MOUSE    SYS     55160 03-10-92   3:10a
+   MOUSE    COM     56408 03-10-93   6:00a
+
+If the system does not locate a mouse, your driver may have
+a different name or these files may not be currently
+installed on the system.  Some other common names for mouse
+drivers are IMOUSE, GMOUSE, and HPMOUSE.  Your mouse drivers
+may have been included on a floppy disk which came packaged
+along with your mouse.  For information on the proper name
+for your mouse, check the owner's manual which came with
+your mouse.
+
+3) Copying the mouse driver to your BOOT DISK:
+
+Once you have located the mouse driver, you will need to
+copy it to the boot disk.  In this step, we will assume that
+the mouse drivers were located in the C:\MOUSE> directory as
+shown in the step above.  To copy the MOUSE.SYS file to the
+boot disk, type the following at the C:\> prompt:
+
+   COPY  C:\MOUSE\MOUSE.*  A:  <ENTER>
+
+Please substitute the appropriate path and file name for
+your mouse driver in the command line above.  You should
+then see a message indicating some files were copied.
+
+4) CREATING THE CONFIG.SYS FILE
+
+Now switch to the A: and type the following:
+
+   COPY  CON  CONFIG.SYS <Enter>
+   (The cursor will drop down one line and blink)
+
+   FILES=50  <Enter>
+   BUFFERS=30 <Enter>
+
+If you are using the MOUSE.SYS file to load your mouse, add 
+the following line to the CONFIG.SYS.
+
+   DEVICE=MOUSE.SYS  <Enter>
+
+Complete the file by pressing the  F6  Function key <Enter>
+
+5) CREATING THE AUTOEXEC.BAT FILE
+
+Now create an AUTOEXEC.BAT file on the A: drive by typing:
+
+   COPY  CON  AUTOEXEC.BAT   <Enter>
+       (the cursor will drop down one line and blink)
+
+   SET  COMSPEC=C:\COMMAND.COM  <Enter>
+   PROMPT  $P$G  <Enter>
+   PATH=C:\DOS <Enter> 
+
+If you are using the MOUSE.COM file to load the mouse, add 
+the following line to the AUTOEXEC.BAT file.
+
+   MOUSE.COM  <Enter>
+
+Complete the file by pressing the  F6  Function key <Enter>
+
+Now you are ready to use your new Sierra Boot Disk.  Place
+the boot disk in your A: drive and press the <CTRL> <ALT>
+and <DEL> keys at the same time. Your computer will reboot
+and you will be ready to start your Sierra game as you
+normally would.
+
+------------------------------------------------------
+F. FREEING MEMORY IN WINDOWS
+
+The Windows memory managers will use memory differently that
+the standard DOS memory managers.  The problem that you are
+experiencing is related to the amount of available working
+memory within Windows.  You can check the available memory
+in Windows from the PROGRAM manager by selecting 'HELP' and
+then 'ABOUT PROGRAM MANAGER'.  The second line from the
+bottom of the Window will be the amount of free memory in
+Windows.
+
+The best way to solve the memory problem is to direct
+Windows to use a Virtual Memory swap file. Both your Windows
+manual and the HELP section in the CONTROL PANEL will give
+you a complete explanation of Virtual Memory and its
+configuration.
+
+-----------------------------------------------------
+V.  SIERRA ADDRESSES AND PHONE NUMBERS
+
+1) Ordering games
+
+If you are interested in future adventure games or any other 
+of the Sierra family of fine software products, call us at
+(800) 326-6654 [or (209) 683-4468 outside the United States].
+
+
+2) TECHNICAL HELP
+
+Please refer to the technical help section in your Sierra
+game manual.
+
+If you still have a problem, call or fax Sierra Technical 
+Support:
+
+   Tel:  (209) 683-8989 
+   Fax:  (209) 683-3633
+   Mail: (See address in Sierra Game Manual) 
+
+In the U.K. call or fax our Sierra Technical Support
+Department:
+
+   Tel:(44)734-303-171
+   Fax:(44)734-303-201
+   Mail: (See address in Sierra Game Manual)
+
+Sierra's Automated "800" Technical Support Line (800) 376-2683
+
+You can also reach the Technical Support Department on the 
+following services:
+
+   Sierra BBS......(209) 683-4463 (Settings 8,N,1 & up to 9600 bps)
+   CompuServe......GAMAPUB (Technical Support ID 76004,2143)
+   PRODIGY.........Technical Support ID WBWW55A
+   GEnie...........Private E-Mail SIERRA.SUP
+   America Online..Keyword: SIERRA
+
+============================================================

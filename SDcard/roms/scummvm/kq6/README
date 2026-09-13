@@ -1,0 +1,132 @@
+This is the readme file for King's Quest VI - Heir Today, Gone Tomorrow
+To print this file, enter the directory you installed 
+the game to and type "PRINT README."
+
+------------------------------------------------------
+OPENING CARTOON
+
+The opening cartoon for King's Quest VI takes approximately
+6 meg of hard drive space.  After watching the opening
+cartoon you may choose to delete it.  To do so, you need to
+type the following command sequence.
+
+At the dos prompt, type:
+
+cd \sierra\kq6 (or the directory in which you installed the game)
+del *.seq
+
+This will free up approximately 6 meg on your hard drive.
+
+If you would like to see the opening cartoon AFTER you
+have deleted it, you must reinstall the game.  Detailed
+instructions for this are in your documentation.
+
+The opening cartoon will be installed to your hard drive
+in a compressed form.  Upon initial startup, the files
+will decompress.  This process occurs only once during
+initial startup of the game.  For this process to occur,
+you MUST run the KQ6 batch file from the directory you
+installed the game to.
+
+------------------------------------------------------
+SLOW MACHINES AND EGA SUPPORT
+
+If you have a slow machine, or an EGA card, you will not
+receive an opening cartoon.  Instead, you will receive a
+text derivative of the opening cartoon.  A slow machine
+is considered a machine that is slower than a 386sx 16 mhz.
+
+------------------------------------------------------
+FROM THE KING'S QUEST VI TEAM
+
+We would love to hear what you think about the game.  If
+you have any comments, please write us.
+
+------------------------------------------------------
+GAME WALKTHROUGH
+
+A beginning walkthrough for the game is available.
+Simply enter the directory you installed the game
+to and type "WALKTHRU".  This will show you a
+walkthrough.  To print this file, enter the directory
+you installed the game to and type "PRINT WALKTHRU."
+
+------------------------------------------------------
+GUIDEBOOK TO THE LAND OF THE GREEN ISLES
+
+You may be tempted to (at some point) throw out the
+Guidebook.  This is a warning not to, however.  This
+guide contains detailed instructions to get past
+certain points in the game.  You will not be able
+to pass these points without the guide.
+
+------------------------------------------------------
+GAME MEMORY REQUIREMENTS
+
+To play King's Quest VI, we require that you have
+573,000 bytes of available memory.  That number is
+applicable with only the internal PC speaker.  If you
+have a sound card of any kind, we require 580,000
+bytes of available memory.  If you notice some slowdowns
+in the game, increase your base memory a little.
+This will make it a little faster for all of you
+speed demons out there.  To free up more memory
+you can buy a memory manager, or you can create a
+boot disk.  You can create a boot disk from the game
+install program.
+
+------------------------------------------------------
+TIPS FOR FASTER LOADING
+
+If you notice the game, or opening cartoon running
+slowly, it may be due to a fragmented hard drive.  
+There are many commercial and shareware hard
+drive unfragmenting programs available.
+
+------------------------------------------------------
+TANDY 2500 (and some other models)
+
+If you notice a tremendous slowdown on a Tandy machine,
+it may be due to a lack of memory.  There have been
+noted problems where the Tandy may report more memory
+than it actually has.  The solution to this is to free
+up more memory, or make a boot disk.
+
+-----------------------------------------------------
+VOICE AND SOUND EFFECTS
+
+If you happen to notice your voice or the sound effects
+in the game breaking up, we have included a utility with
+the disks that will fix that.  The utility is called:
+
+DCOMPAUD.EXE
+
+To run this program, enter the directory you installed
+the game to and type:
+
+DCOMPAUD .\
+
+It is very important that you type the command
+exactly as shown.  This process will take between 2
+and 5 minutes, based on machine speed.  You will
+need an extra 2 meg on your hard disk to run this
+program.
+
+-----------------------------------------------------
+NEW USERS
+
+If you are unfamiliar with Sierra's icon interface,
+you may wish to select the HELP button from the
+King's Quest VI title screen.
+
+-----------------------------------------------------
+OUT OF HANDLES
+
+On machines with a high amount of RAM (over 8 meg),
+you may occasionally experience an "Out of Handles"
+error.  There is currently no way to fix this.
+There are two solutions.  You may install to NOT
+use extended memory, or just restart the game when
+the error occurs.  We apologize for any inconvenience
+this may cause.
+

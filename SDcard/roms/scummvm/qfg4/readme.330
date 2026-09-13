@@ -1,0 +1,84 @@
+Quest for Glory: Shadows of Darkness
+Note Patch
+February 1994
+
+Copy the two enclosed files (330.scr and 330.hep) to your
+SHADOWS game directory.  For example, if you installed the 
+game into your C: drive in a directory called C:\SIERRA\SHADOWS 
+and the files are on a disk in your B: drive, you would type the 
+following:
+
+C: [ENTER]
+CD \SIERRA\SHADOWS [ENTER]
+COPY B:*.* [ENTER]
+
+This patch is compatible with all saved games EXCEPT games saved 
+in the Hero's bedroom at the Inn.
+
+The patch fixes the order of events in the Hero's bedroom
+so that important events are certain to occur.  In particular,
+the Hero should awaken from a dream to find a note signed
+"Katrina" 1-3 nights after rescuing Tanya.  If this event
+does not occur, the game cannot be completed.  To recover,
+install this patch, then restore to a saved game before Hero
+has rescued Tanya from the castle.
+
+--------------------------------------------------------------
+
+If  you  continue  to  experience  any  problems,  or  if you have any  
+questions  concerning  any  of  the above steps, our Technical Support
+Team will be more than happy to assist you.  
+      
+       US
+
+       SIERRA ON-LINE
+       P.O. BOX 800
+       COARSEGOLD, CA  93614-0800
+       ATTN:  TECHNICAL SUPPORT
+
+       Phone: (209) 683-8989 
+       M-F 8:15 am - 4:45 pm 
+       FAX: (209) 683-3633
+
+       EUROPE (UK)
+
+       Phone: (44) 734 303171
+       M-F 9:00 am - 5:00 pm
+
+ 
+You can also reach the Technical Support Department on the following 
+services:
+
+  Sierra BBS           (209) 683-4463 (settings 8,N,& 1, up to 14,400 baud)
+                       CompuServe access: GO SIERRA
+  Compuserve           GAMAPUB (Technical Support ID: 76004,2143)
+  PRODIGY              Sierra Technical Support ID: WBWW55A
+  GEnie                Private E-Mail: SIERRA.SUP     
+  America Online       Keyword: SIERRA
+             
+
+Please   outline  the  problems  along with specific information about 
+your  computer  system,  and  we  will  gladly  respond  to  your fax, 
+letter or BBS message as soon as possible.
+
+
+                 New "800" Technical Support Service
+
+Why  not  try  it... it  isn't  going  to  cost  you a dime!  In Sierra 
+On-Line's  continued  commitment  to  providing  the highest caliber of 
+service, we have developed a 24 hour, "800" automated Technical Support 
+line  with  every  "frequently  asked" question.  To make it worth your 
+time to try this new service, we've even added the capability  for  you 
+to fax back to yourself a copy of the answer to your technical problem!  
+Just think...no "on hold" time...just to the point SERVICE!!!
+
+We  really  hope  that  you  will  give  it a try.  We've made the menu 
+structure  very  simple  to  follow and we are committed to keeping the 
+issues  current.   Let's face it, the worst that could happen...you may 
+not  find  the answer you need, and you will call our Technical Support 
+Department  and  speak  with  a Technical Representative.  And the best 
+that  could  happen...you will find your answer and it won't cost you a 
+dime.    So what have you got to lose?  Try it...you will like it!!
+
+                         1-800-376-2683
+

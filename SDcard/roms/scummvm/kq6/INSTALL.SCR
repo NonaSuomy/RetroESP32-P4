@@ -1,0 +1,81 @@
+space %1: 19726 noIntro
+godir %1:%4 cantcreate
+echo install the intro. >dointro
+goto Continue
+:noIntro
+rem Check to see if they can at least install the game, if not goto nospace
+space %1: 12900 nospace
+clear
+echo If you want to see the opening cartoon, 20.2 megabytes
+echo of hard disk space is necessary on drive %1:. However,
+echo you do have enough space to install just the game.
+echo Continue installing Kings Quest VI? (Y/N)
+pick yn Continue Quit
+:Quit
+end
+:Continue
+godir %1:%4 cantcreate
+del resource.000
+echo Copying files to %1:%4 ...
+rem Make the batch files to run the game
+echo echo off			>..\kq6.bat
+echo cd %4           >>..\kq6.bat
+echo kq6             >>..\kq6.bat
+copy %2:*.*
+del intro.p01
+echo %3>resource.cfg
+if not exist dointro goto doGame
+echo
+echo Copying Intro files...
+exists %2:intro.p01 Please insert the disk labeled "Disk 1" in drive %2:.
+copy seq.exe + %2:intro.p01
+exists %2:intro.p02 Please insert the disk labeled "Disk 2" in drive %2:.
+copy seq.exe + %2:intro.p02
+exists %2:intro.p03 Please insert the disk labeled "Disk 3" in drive %2:.
+copy seq.exe + %2:intro.p03
+:doGame
+del dointro
+echo
+echo Copying Game files...
+exists %2:resource.p01 Please insert the disk labeled "Disk 3" in drive %2:.
+copy resource.000 + %2:resource.p01
+exists %2:resource.p02 Please insert the disk labeled "Disk 4" in drive %2:.
+copy resource.000 + %2:resource.p02
+exists %2:resource.p03 Please insert the disk labeled "Disk 5" in drive %2:.
+copy resource.000 + %2:resource.p03
+exists %2:resource.p04 Please insert the disk labeled "Disk 6" in drive %2:.
+copy resource.000 + %2:resource.p04
+exists %2:resource.p05 Please insert the disk labeled "Disk 7" in drive %2:.
+copy resource.000 + %2:resource.p05
+exists %2:resource.p06 Please insert the disk labeled "Disk 8" in drive %2:.
+copy resource.000 + %2:resource.p06
+rem audio files
+echo
+echo Copying audio files...
+exists %2:audio.p01 Please insert the disk labeled "Disk 8" in drive %2:.
+copy resource.aud + %2:audio.p01
+exists %2:audio.p02 Please insert the disk labeled "Disk 9" in drive %2:.
+copy resource.aud + %2:audio.p02
+copy %2:*.*
+del audio.p02
+cls
+echo
+echo ÿTo play Kings Quest VI now:
+echo ÿ   Type KQ6 [ENTER].
+echo
+echo ÿTo play Kings Quest VI later:
+echo ÿ   From the directory of %1:%4,
+echo ÿ   Type KQ6 and press [ENTER].
+echo
+pause
+end
+:cantcreate
+alert Unable to create directory %1:%4
+end
+:nospace
+cls
+echo
+echo There is not enough space on %1: to install. 
+echo 13.2 megabytes of disk space are necessary.
+pause
+end
