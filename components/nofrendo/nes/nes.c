@@ -364,6 +364,9 @@ static void system_video(bool draw)
 
 extern void do_audio_frame();
 extern bool forceConsoleReset;
+#ifdef PAPP_NES
+extern void papp_nes_frame_pace(int64_t frame_start);
+#endif
 
 /* main emulation loop */
 void nes_emulate(void)
@@ -381,6 +384,11 @@ void nes_emulate(void)
    int64_t stopTime;
    int64_t totalElapsedTime = 0;
    int frame = 0;
+#ifdef PAPP_NES
+   int64_t deadline = 0;
+   int64_t cpu_us = 0, video_us = 0, audio_us = 0;
+   int skipped = 0, consecutive_skips = 0;
+#endif
 
 
    for (int i = 0; i < 4; ++i)
@@ -400,11 +408,34 @@ void nes_emulate(void)
    {
        startTime = esp_timer_get_time();
 
-        /* ESP32-P4: render every frame (no skip needed at 360MHz) */
+#ifdef PAPP_NES
+        if (!deadline) deadline = startTime;
+        /* Skip presentation when behind, but keep emulation/audio/input moving.
+         * Bound catch-up so an overloaded host still presents regularly. */
+        bool draw = startTime <= deadline + 16667 || consecutive_skips >= 2;
+        consecutive_skips = draw ? 0 : consecutive_skips + 1;
+        skipped += !draw;
+        nes_renderframe(draw);
+        int64_t after_cpu = esp_timer_get_time();
+        system_video(draw);
+        if (!draw) osd_getinput();
+        int64_t after_video = esp_timer_get_time();
+#else
         nes_renderframe(true);
         system_video(true);
+#endif
 
         do_audio_frame();
+
+#ifdef PAPP_NES
+        int64_t after_audio = esp_timer_get_time();
+        cpu_us += after_cpu - startTime;
+        video_us += after_video - after_cpu;
+        audio_us += after_audio - after_video;
+        deadline += 16667;
+        if (after_audio - deadline > 50000) deadline = after_audio - 50000;
+        papp_nes_frame_pace(deadline - 16667);
+#endif
 
         stopTime = esp_timer_get_time();
 
@@ -414,6 +445,13 @@ void nes_emulate(void)
 
         if (frame == 60)
         {
+#ifdef PAPP_NES
+          printf("NES stages: cpu=%lld video=%lld audio=%lld us/frame skipped=%d/60\n",
+                 (long long)(cpu_us / 60), (long long)(video_us / 60),
+                 (long long)(audio_us / 60), skipped);
+          cpu_us = video_us = audio_us = 0;
+          skipped = 0;
+#endif
           float seconds = totalElapsedTime / 1000000.0f;
           float fps = frame / seconds;
 
