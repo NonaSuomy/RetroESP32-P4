@@ -36,8 +36,13 @@ typedef struct __attribute__((packed)) {
     uint32_t reserved;     /* Padding to 32 bytes                       */
 } papp_header_t;
 
+#ifdef __cplusplus
+static_assert(sizeof(papp_header_t) == PAPP_HEADER_SIZE,
+              "papp_header_t must be 32 bytes");
+#else
 _Static_assert(sizeof(papp_header_t) == PAPP_HEADER_SIZE,
                "papp_header_t must be 32 bytes");
+#endif
 
 /* ── Gamepad State (matches odroid_gamepad_state layout) ─────────────── */
 
@@ -62,6 +67,14 @@ enum {
 typedef struct {
     int values[PAPP_INPUT_MAX];
 } papp_gamepad_state_t;
+
+/* A queued keyboard event from the launcher's USB HID text path.  PAPP apps
+ * receive Quake-style key numbers (ASCII for printable keys, or the named
+ * constants defined by the app) and a press/release state. */
+typedef struct {
+    int key;
+    int down;
+} papp_keyboard_event_t;
 
 /* ── Memory Capability Flags (matches ESP-IDF MALLOC_CAP_*) ─────────── */
 
@@ -182,7 +195,75 @@ typedef struct {
      *     if (svc->paddle_read) { int raw = svc->paddle_read(); ... } */
     int (*paddle_read)(void);
 
+    /* ── Dedicated PAPP close control (L3) ───────────────────────────── */
+    /* Returns 1 while the configured physical L3 button is held. This is
+     * appended after paddle_read so existing PAPP binaries remain ABI-safe. */
+    int (*input_l3_read)(void);
+
+    /* ── USB mouse events ────────────────────────────────────────────── */
+    /* Returns 1 when a mouse report has been accumulated since the last
+     * call. dx/dy are relative motion in the PAPP canvas/presentation space:
+     * positive dx moves the visible cursor right and positive dy moves it
+     * down. The loader applies the inverse of the display's 180-degree
+     * presentation rotation exactly once; apps must not rotate these values.
+     * buttons uses HID bits 1/2/4 for left/right/middle. Appended so existing
+     * ABI-v1 binaries remain safe. */
+    int (*input_mouse_read)(int *dx, int *dy, int *buttons);
+
+    /* ── USB keyboard text/events ────────────────────────────────────── */
+    /* Pop one queued keyboard event. Returns 1 when an event was returned,
+     * 0 when the queue is empty. Printable keys use ASCII values; special
+     * keys use the Quake key constants in the app. */
+    int (*input_keyboard_read)(papp_keyboard_event_t *event);
+
+    /* ── Directory/stat services ────────────────────────────────────── */
+    /* These are appended so older PAPPs retain their ABI offsets.  They
+     * let larger ports (for example ScummVM) browse the mounted SD VFS
+     * without dereferencing a newlib DIR or FILE object inside PSRAM. */
+    void *(*dir_open)(const char *path);
+    int (*dir_read)(void *dir, char *name, size_t name_size, int *is_dir);
+    int (*dir_close)(void *dir);
+    int (*file_stat)(const char *path, int *is_dir, long *size);
+    int (*file_mkdir)(const char *path);
+
+    /* ── Full physical input path (append-only) ─────────────────────── */
+    /* Same layout as input_gamepad_read, but without the USB keyboard
+     * controls. Apps with a text keyboard path can use this for gamepad
+     * input while consuming keyboard events separately. */
+    void (*input_gamepad_read_physical)(papp_gamepad_state_t *state);
+
+    /* ── Mutable file operations (append-only) ─────────────────────── */
+    /* Paths use the same portable /sd namespace as file_open and are
+     * resolved by the launcher to the active SD or USB volume.  These are
+     * optional so an older launcher can still load the PAPP. */
+    int (*file_unlink)(const char *path);
+    int (*file_rename)(const char *src, const char *dst);
+
+    /* ── ZIP-backed ROM helper (append-only) ────────────────────────── */
+    /* Find the first regular ZIP entry whose extension is present in the
+     * pipe-separated list (for example ".nes|.fds|").  The matching entry
+     * is transparently extracted to cache_dir/cache_stem.<ext> and the
+     * portable /sd path is returned in out_path.  The archive itself stays
+     * untouched, and the helper resolves /sd to the active USB volume when
+     * USB storage is selected. */
+    int (*file_zip_extract_first)(const char *archive,
+                                  const char *extensions,
+                                  const char *cache_dir,
+                                  const char *cache_stem,
+                                  char *out_path, size_t out_size);
+
 } app_services_t;
+
+/* Hardware mouse reports are expressed in physical panel directions, while
+ * PAPPs draw in the unrotated source canvas. Both supported launchers present
+ * that canvas with a 180-degree rotation, so their service boundary converts
+ * relative motion with this same helper. Keep this in the ABI header so a new
+ * loader cannot silently choose a different sign convention. */
+static inline void papp_mouse_delta_to_canvas(int *dx, int *dy)
+{
+    if (dx != NULL) *dx = -*dx;
+    if (dy != NULL) *dy = -*dy;
+}
 
 /* ── Entry Point Signature ───────────────────────────────────────────── */
 /*
@@ -200,6 +281,13 @@ typedef int (*papp_entry_fn_t)(const app_services_t *svc);
 /* Opaque handle for a loaded PSRAM app */
 typedef struct psram_app *psram_app_handle_t;
 
+/* Callback used by the direct-stream loader.  The callback must fill exactly
+ * `len` bytes into `buf` and return 0, or return a negative value on timeout
+ * or transport failure.  `timeout_ms` is the maximum time allowed for the
+ * requested read. */
+typedef int (*psram_app_stream_read_fn)(void *ctx, void *buf,
+                                        size_t len, int timeout_ms);
+
 /**
  * Load a .papp binary from the filesystem into PSRAM.
  * Does NOT execute it yet.
@@ -209,6 +297,19 @@ typedef struct psram_app *psram_app_handle_t;
  * @return ESP_OK on success
  */
 esp_err_t psram_app_load(const char *path, psram_app_handle_t *handle);
+
+/**
+ * Receive a complete .papp image from a stream directly into PSRAM.
+ *
+ * The stream includes the 32-byte PAPP header followed by text/rodata/data.
+ * The loader validates the declared image size, allocates the executable
+ * image in PSRAM, zeroes its BSS, and returns a normal app handle.  No file
+ * is created on the SD card.
+ */
+esp_err_t psram_app_load_stream(size_t image_size,
+                                psram_app_stream_read_fn reader,
+                                void *ctx,
+                                psram_app_handle_t *handle);
 
 /**
  * Execute a previously loaded PSRAM app.
